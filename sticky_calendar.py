@@ -1882,6 +1882,10 @@ class StickyTrayManager:
             self.action_autostart.setChecked(not checked)
             self.notify("설정 실패", "윈도우 시작 프로그램 설정 중 오류가 발생했습니다.")
 
+    def notify(self, title, message):
+        """풍선 도움말 토스트 알림"""
+        self.tray_icon.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 4000)
+
     def exit_app(self):
         """프로그램 완전 종료 및 핫키 해제"""
         try:
