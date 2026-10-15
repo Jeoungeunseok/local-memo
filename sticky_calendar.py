@@ -32,6 +32,7 @@ try:
         QListWidget,
         QListWidgetItem,
         QFrame,
+        QMessageBox,
     )
     from PyQt6.QtCore import QDate, QTime, Qt, QPoint, QTimer, QThread, pyqtSignal
     from PyQt6.QtGui import (
@@ -73,6 +74,7 @@ except Exception:
         QListWidget,
         QListWidgetItem,
         QFrame,
+        QMessageBox,
     )
     from PySide6.QtCore import QDate, QTime, Qt, QPoint, QTimer, QThread, Signal as pyqtSignal
     from PySide6.QtGui import (
@@ -95,13 +97,28 @@ try:
 except ImportError:
     winsound = None
 
-# DB 경로 설정 (exe로 단일 패키징 시 AppData 폴더에 안전하게 영구 보존)
-if getattr(sys, 'frozen', False):
+# DB 경로 설정 (exe 패키징 및 로컬 실행 간 데이터 완벽 보존 및 동기화)
+def get_db_path():
     app_data_dir = os.path.join(os.getenv("APPDATA", os.path.expanduser("~")), "StickyCalendar")
     os.makedirs(app_data_dir, exist_ok=True)
-    DB_PATH = os.path.join(app_data_dir, "sticky_notes.db")
-else:
-    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sticky_notes.db")
+    appdata_db = os.path.join(app_data_dir, "sticky_notes.db")
+    local_db = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sticky_notes.db")
+
+    # 로컬 DB가 존재하고 AppData DB가 비어있거나 없으면 자동 마이그레이션
+    if os.path.exists(local_db):
+        if not os.path.exists(appdata_db) or (os.path.getsize(appdata_db) < 1000 and os.path.getsize(local_db) > 1000):
+            try:
+                import shutil
+                shutil.copy2(local_db, appdata_db)
+            except Exception:
+                pass
+
+    if getattr(sys, 'frozen', False):
+        return appdata_db
+    else:
+        return appdata_db if os.path.exists(appdata_db) else local_db
+
+DB_PATH = get_db_path()
 
 # 파스텔 톤 테마 정의 (배경색, 헤더색, 테두리색, 텍스트색)
 PASTEL_THEMES = {
@@ -187,6 +204,8 @@ def init_db():
         cursor.execute("ALTER TABLE sticky_notes ADD COLUMN target_time TEXT DEFAULT '09:00'")
     if "is_alarm_enabled" not in columns:
         cursor.execute("ALTER TABLE sticky_notes ADD COLUMN is_alarm_enabled INTEGER DEFAULT 0")
+    if "is_visible" not in columns:
+        cursor.execute("ALTER TABLE sticky_notes ADD COLUMN is_visible INTEGER DEFAULT 1")
     conn.commit()
     conn.close()
 
@@ -614,13 +633,52 @@ class CalendarWindow(QMainWindow):
 
     def on_item_double_clicked(self, item):
         note_id = item.data(Qt.ItemDataRole.UserRole)
-        if note_id:
-            for w in active_windows:
-                if w.note_id == note_id:
-                    w.show()
-                    w.raise_()
-                    w.activateWindow()
-                    return
+        if not note_id:
+            return
+
+        # 1. 이미 active_windows에 존재하는 경우: 전면 표시 & 포커스
+        for w in active_windows:
+            if w.note_id == note_id:
+                w.show()
+                w.raise_()
+                w.activateWindow()
+                conn = sqlite3.connect(DB_PATH)
+                conn.execute("UPDATE sticky_notes SET is_visible = 1 WHERE id = ?", (note_id,))
+                conn.commit()
+                conn.close()
+                return
+
+        # 2. 닫혀 있어서 active_windows에 없는 경우: DB에서 안전하게 불러와서 창 복원!
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, target_date, target_time, content, color, is_pinned, is_alarm_enabled, pos_x, pos_y, width, height FROM sticky_notes WHERE id = ?",
+            (note_id,)
+        )
+        row = cursor.fetchone()
+        if row:
+            cursor.execute("UPDATE sticky_notes SET is_visible = 1 WHERE id = ?", (note_id,))
+            conn.commit()
+        conn.close()
+
+        if row:
+            w = StickyNoteWindow(
+                note_id=row[0],
+                target_date=row[1],
+                target_time=row[2] or "",
+                content=row[3],
+                color=row[4],
+                is_pinned=row[5],
+                is_alarm_enabled=row[6] or 0,
+                x=row[7],
+                y=row[8],
+                w=max(400, row[9]),
+                h=max(260, row[10]),
+            )
+            active_windows.append(w)
+            w.show()
+            w.raise_()
+            w.activateWindow()
 
     def create_note_for_selected_date(self):
         sel_date = self.calendar.selectedDate().toString("yyyy-MM-dd")
@@ -737,16 +795,23 @@ class StickyNoteWindow(QMainWindow):
         # 9. 트레이로 숨기기 (최소화) 버튼
         hide_btn = QPushButton("➖")
         hide_btn.setFixedSize(24, 24)
-        hide_btn.setToolTip("트레이로 숨기기 (Esc / Ctrl+H)")
+        hide_btn.setToolTip("트레이로 최소화 (Ctrl+H)")
         hide_btn.clicked.connect(self.hide_to_tray)
         header_layout.addWidget(hide_btn)
 
-        # 10. 삭제 버튼
-        del_btn = QPushButton("✕")
+        # 10. 메모 완전 삭제 버튼 (🗑️)
+        del_btn = QPushButton("🗑️")
         del_btn.setFixedSize(24, 24)
-        del_btn.setToolTip("삭제 (Ctrl+D)")
-        del_btn.clicked.connect(self.delete_note)
+        del_btn.setToolTip("메모 완전 삭제 (캘린더에서도 완전히 삭제, Ctrl+D)")
+        del_btn.clicked.connect(self.confirm_delete_note)
         header_layout.addWidget(del_btn)
+
+        # 11. 창 닫기 버튼 (✕ - 닫아도 캘린더와 DB에 안전하게 보존됨)
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(24, 24)
+        close_btn.setToolTip("창 닫기 (캘린더와 DB에 안전하게 영구 보존됨, Esc)")
+        close_btn.clicked.connect(self.close_note)
+        header_layout.addWidget(close_btn)
 
         main_layout.addLayout(header_layout)
 
@@ -979,9 +1044,10 @@ class StickyNoteWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+P"), self, self.toggle_pin)
         QShortcut(QKeySequence("Ctrl+T"), self, self.toggle_mode)
         QShortcut(QKeySequence("Ctrl+S"), self, self.auto_save)
-        QShortcut(QKeySequence("Ctrl+D"), self, self.delete_note)
+        QShortcut(QKeySequence("Ctrl+D"), self, self.confirm_delete_note)
+        QShortcut(QKeySequence("Ctrl+W"), self, self.close_note)
         QShortcut(QKeySequence("Ctrl+H"), self, self.hide_to_tray)
-        QShortcut(QKeySequence("Escape"), self, self.hide_to_tray)
+        QShortcut(QKeySequence("Escape"), self, self.close_note)
 
     def apply_style(self):
         theme = PASTEL_THEMES[self.current_color]
@@ -1204,7 +1270,34 @@ class StickyNoteWindow(QMainWindow):
         if hasattr(QApplication.instance(), "tray_manager"):
             QApplication.instance().tray_manager.refresh_calendar()
 
-    def delete_note(self):
+    def close_note(self):
+        """창만 닫기: DB와 캘린더에는 100% 안전하게 영구 저장되어 유지됨"""
+        self.auto_save()
+        if self.note_id is not None:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE sticky_notes SET is_visible = 0 WHERE id = ?", (self.note_id,))
+            conn.commit()
+            conn.close()
+        self.hide()
+        if hasattr(QApplication.instance(), "tray_manager"):
+            QApplication.instance().tray_manager.refresh_calendar()
+            QApplication.instance().tray_manager.notify("메모 창 닫힘", "메모가 닫혔습니다. 캘린더(📅) 또는 트레이 메뉴에서 언제든 다시 열 수 있습니다.")
+
+    def confirm_delete_note(self):
+        """확인 대화상자 후 DB와 캘린더에서 완전히 영구 삭제"""
+        reply = QMessageBox.question(
+            self,
+            "메모 완전 삭제",
+            "이 메모를 완전히 삭제하시겠습니까?\n\n삭제 시 캘린더에서도 완전히 지워집니다.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.delete_note_permanently()
+
+    def delete_note_permanently(self):
+        """DB와 캘린더에서 영구 삭제"""
         if self.note_id is not None:
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
@@ -1216,6 +1309,7 @@ class StickyNoteWindow(QMainWindow):
         self.close()
         if hasattr(QApplication.instance(), "tray_manager"):
             QApplication.instance().tray_manager.refresh_calendar()
+            QApplication.instance().tray_manager.notify("메모 완전 삭제", "메모가 데이터베이스와 캘린더에서 완전히 삭제되었습니다.")
 
     def create_new_window(self):
         geo = self.geometry()
@@ -1585,15 +1679,17 @@ def main():
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, target_date, target_time, content, color, is_pinned, is_alarm_enabled, pos_x, pos_y, width, height
+        SELECT id, target_date, target_time, content, color, is_pinned, is_alarm_enabled, pos_x, pos_y, width, height, COALESCE(is_visible, 1)
         FROM sticky_notes
         """
     )
     rows = cursor.fetchall()
     conn.close()
 
+    opened_any = False
     if rows:
         for row in rows:
+            is_visible = row[11]
             w = StickyNoteWindow(
                 note_id=row[0],
                 target_date=row[1],
@@ -1604,11 +1700,20 @@ def main():
                 is_alarm_enabled=row[6] or 0,
                 x=row[7],
                 y=row[8],
-                w=max(380, row[9]),
+                w=max(400, row[9]),
                 h=max(260, row[10]),
             )
             active_windows.append(w)
-            w.show()
+            if is_visible:
+                w.show()
+                opened_any = True
+            else:
+                w.hide()
+
+        # 만약 저장된 메모들은 있는데 전부 닫혀 있는 상태라면, 가장 최근 메모를 열어두어 편리하게 사용하도록 지원
+        if not opened_any and active_windows:
+            active_windows[-1].show()
+            active_windows[-1].raise_()
     else:
         # 최초 실행 시 기본 메모 하나 생성
         initial_note = StickyNoteWindow(
@@ -1621,7 +1726,7 @@ def main():
             is_alarm_enabled=0,
             x=200,
             y=200,
-            w=390,
+            w=410,
             h=300,
         )
         active_windows.append(initial_note)
