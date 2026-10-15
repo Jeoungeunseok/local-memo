@@ -369,8 +369,8 @@ function createNoteElement(note) {
   // Positioning
   el.style.left = `${note.pos_x || 100}px`;
   el.style.top = `${note.pos_y || 100}px`;
-  el.style.width = `${note.width || 320}px`;
-  el.style.height = `${note.height || 280}px`;
+  el.style.width = `${Math.max(350, note.width || 360)}px`;
+  el.style.height = `${Math.max(240, note.height || 280)}px`;
   el.style.zIndex = note.is_pinned ? 500 : ++highestZIndex;
 
   // Detect if content has todo pattern
@@ -642,8 +642,9 @@ function attachTodoEvents(noteEl, note) {
   // Delete todo item
   todoContainer.querySelectorAll('.todo-delete-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
+      e.stopPropagation();
       const idx = parseInt(btn.dataset.index, 10);
-      const lines = note.content.split('\n');
+      const lines = (note.content || '').split('\n').filter(l => l.trim() !== '');
       lines.splice(idx, 1);
       note.content = lines.join('\n');
       noteEl.querySelector('.note-body').innerHTML = renderTodoView(note.content);
@@ -651,6 +652,53 @@ function attachTodoEvents(noteEl, note) {
       debouncedSave(note);
     });
   });
+
+  // Keyboard shortcuts on todo items: Backspace on empty deletes, Enter creates next item
+  todoContainer.querySelectorAll('.todo-text').forEach(input => {
+    input.addEventListener('keydown', (e) => {
+      const idx = parseInt(input.dataset.index, 10);
+      if (e.key === 'Backspace' && input.value.trim() === '') {
+        e.preventDefault();
+        const lines = (note.content || '').split('\n').filter(l => l.trim() !== '');
+        lines.splice(idx, 1);
+        note.content = lines.join('\n');
+        noteEl.querySelector('.note-body').innerHTML = renderTodoView(note.content);
+        attachTodoEvents(noteEl, note);
+        debouncedSave(note);
+        const inputs = noteEl.querySelectorAll('.todo-text');
+        if (inputs.length > 0) {
+          const target = inputs[Math.max(0, idx - 1)];
+          if (target) {
+            target.focus();
+            target.selectionStart = target.selectionEnd = target.value.length;
+          }
+        }
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const lines = (note.content || '').split('\n').filter(l => l.trim() !== '');
+        lines.splice(idx + 1, 0, '[ ] ');
+        note.content = lines.join('\n');
+        noteEl.querySelector('.note-body').innerHTML = renderTodoView(note.content);
+        attachTodoEvents(noteEl, note);
+        debouncedSave(note);
+        const inputs = noteEl.querySelectorAll('.todo-text');
+        if (inputs[idx + 1]) inputs[idx + 1].focus();
+      }
+    });
+  });
+
+  // Clear completed items button
+  const clearCompletedBtn = todoContainer.querySelector('.todo-clear-completed-btn');
+  if (clearCompletedBtn) {
+    clearCompletedBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const lines = (note.content || '').split('\n').filter(l => !l.startsWith('[x]'));
+      note.content = lines.join('\n');
+      noteEl.querySelector('.note-body').innerHTML = renderTodoView(note.content);
+      attachTodoEvents(noteEl, note);
+      debouncedSave(note);
+    });
+  }
 
   // Add new item
   const addForm = todoContainer.querySelector('.todo-add-form');
@@ -673,14 +721,16 @@ function attachTodoEvents(noteEl, note) {
 // Render Todo View HTML
 function renderTodoView(content) {
   const lines = (content || '').split('\n').filter(l => l.trim() !== '');
+  let completedCount = 0;
   const itemsHtml = lines.map((line, idx) => {
     const isChecked = /^\[x\]/i.test(line);
+    if (isChecked) completedCount++;
     const text = line.replace(/^\[( |x)\]\s*/i, '');
     return `
       <div class="todo-item ${isChecked ? 'completed' : ''}">
-        <input type="checkbox" class="todo-checkbox" data-index="${idx}" ${isChecked ? 'checked' : ''}>
-        <input type="text" class="todo-text" data-index="${idx}" value="${escapeHtml(text)}">
-        <button class="todo-delete-btn" data-index="${idx}" title="삭제">✕</button>
+        <input type="checkbox" class="todo-checkbox" data-index="${idx}" ${isChecked ? 'checked' : ''} title="완료 체크">
+        <input type="text" class="todo-text" data-index="${idx}" value="${escapeHtml(text)}" placeholder="할 일 내용 입력 (Enter로 다음 줄)...">
+        <button class="todo-delete-btn" data-index="${idx}" title="이 할 일 삭제">✕</button>
       </div>
     `;
   }).join('');
@@ -688,12 +738,15 @@ function renderTodoView(content) {
   return `
     <div class="todo-container">
       <div class="todo-list">
-        ${itemsHtml || '<p style="font-size:12px;opacity:0.6;padding:8px;">할 일을 추가해보세요!</p>'}
+        ${itemsHtml || '<p style="font-size:12px;opacity:0.6;padding:8px;">등록된 할 일이 없습니다. 아래에서 추가해보세요!</p>'}
       </div>
-      <form class="todo-add-form">
-        <input type="text" class="todo-add-input" placeholder="+ 새 할 일 추가...">
-        <button type="submit" class="todo-add-btn">추가</button>
-      </form>
+      <div class="todo-footer-toolbar">
+        <form class="todo-add-form">
+          <input type="text" class="todo-add-input" placeholder="+ 새 할 일 추가 (Enter)...">
+          <button type="submit" class="todo-add-btn">추가</button>
+        </form>
+        ${completedCount > 0 ? `<button type="button" class="todo-clear-completed-btn" title="체크된 완료 항목들을 한 번에 삭제합니다">🧹 완료된 항목 정리 (${completedCount}개)</button>` : ''}
+      </div>
     </div>
   `;
 }
@@ -759,8 +812,8 @@ function setupResizable(noteEl, handle, note) {
 
     function onMouseMove(e) {
       if (!isResizingNote) return;
-      const newW = Math.max(260, startW + (e.clientX - startX));
-      const newH = Math.max(200, startH + (e.clientY - startY));
+      const newW = Math.max(340, startW + (e.clientX - startX));
+      const newH = Math.max(220, startH + (e.clientY - startY));
       noteEl.style.width = `${newW}px`;
       noteEl.style.height = `${newH}px`;
       note.width = newW;
@@ -831,7 +884,7 @@ async function createNewNote(defaults = {}) {
     is_alarm_enabled: defaults.is_alarm_enabled || 0,
     pos_x: defaults.pos_x || (150 + Math.floor(Math.random() * 80)),
     pos_y: defaults.pos_y || (120 + Math.floor(Math.random() * 80)),
-    width: defaults.width || 340,
+    width: defaults.width || 360,
     height: defaults.height || 280
   };
 

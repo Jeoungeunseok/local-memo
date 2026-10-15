@@ -145,7 +145,7 @@ class GlobalHotkeyThread(QThread):
 
 
 class StickyNoteWindow(QMainWindow):
-    def __init__(self, note_id=None, target_date=None, target_time="", content="", color="yellow", is_pinned=0, is_alarm_enabled=0, x=150, y=150, w=340, h=300):
+    def __init__(self, note_id=None, target_date=None, target_time="", content="", color="yellow", is_pinned=0, is_alarm_enabled=0, x=150, y=150, w=380, h=300):
         super().__init__()
         self.note_id = note_id
         self.current_color = color if color in PASTEL_THEMES else "yellow"
@@ -156,7 +156,9 @@ class StickyNoteWindow(QMainWindow):
         # 프레임리스 창 및 윈도우 기본 속성
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.SubWindow)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setGeometry(x, y, w, h)
+        self.setMinimumWidth(350)
+        self.setMinimumHeight(240)
+        self.setGeometry(x, y, max(360, w), h)
 
         if self.is_pinned:
             self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
@@ -165,13 +167,13 @@ class StickyNoteWindow(QMainWindow):
         self.container = QWidget(self)
         self.setCentralWidget(self.container)
         main_layout = QVBoxLayout(self.container)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(6)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(4)
 
         # 상단 타이틀 바 레이아웃
         header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(4, 2, 4, 2)
-        header_layout.setSpacing(4)
+        header_layout.setContentsMargins(2, 2, 2, 2)
+        header_layout.setSpacing(2)
 
         # 날짜 선택기
         self.date_picker = QDateEdit()
@@ -196,14 +198,14 @@ class StickyNoteWindow(QMainWindow):
 
         # 알람 켜기/끄기 토글 버튼 (🔔 / 🔕)
         self.alarm_btn = QPushButton("🔔" if self.is_alarm_enabled else "🔕")
-        self.alarm_btn.setFixedSize(26, 26)
+        self.alarm_btn.setFixedSize(24, 24)
         self.alarm_btn.setToolTip("알람 켜기/끄기 (지정 시간에 소리 및 토스트 알림)")
         self.alarm_btn.clicked.connect(self.toggle_alarm)
         header_layout.addWidget(self.alarm_btn)
 
         # 항상 위 핀 버튼
         self.pin_btn = QPushButton("📌" if self.is_pinned else "📍")
-        self.pin_btn.setFixedSize(26, 26)
+        self.pin_btn.setFixedSize(24, 24)
         self.pin_btn.setToolTip("항상 위에 고정 (Ctrl+P)")
         self.pin_btn.clicked.connect(self.toggle_pin)
         header_layout.addWidget(self.pin_btn)
@@ -211,7 +213,7 @@ class StickyNoteWindow(QMainWindow):
         # 색상 변경 메뉴 버튼
         self.color_btn = QToolButton()
         self.color_btn.setText("🎨")
-        self.color_btn.setFixedSize(26, 26)
+        self.color_btn.setFixedSize(24, 24)
         self.color_menu = QMenu(self)
         for theme_name in PASTEL_THEMES.keys():
             action = QAction(theme_name.capitalize(), self)
@@ -223,28 +225,28 @@ class StickyNoteWindow(QMainWindow):
 
         # 투두 체크박스 추가 버튼
         todo_btn = QPushButton("☑️")
-        todo_btn.setFixedSize(26, 26)
+        todo_btn.setFixedSize(24, 24)
         todo_btn.setToolTip("체크박스 투두 추가 (Ctrl+T)")
         todo_btn.clicked.connect(self.add_todo_item)
         header_layout.addWidget(todo_btn)
 
         # 새 메모 추가 버튼
         new_btn = QPushButton("➕")
-        new_btn.setFixedSize(26, 26)
+        new_btn.setFixedSize(24, 24)
         new_btn.setToolTip("새 일정 메모 (Ctrl+N)")
         new_btn.clicked.connect(self.create_new_window)
         header_layout.addWidget(new_btn)
 
         # 트레이로 숨기기 (최소화) 버튼
         hide_btn = QPushButton("➖")
-        hide_btn.setFixedSize(26, 26)
+        hide_btn.setFixedSize(24, 24)
         hide_btn.setToolTip("트레이로 숨기기 (Esc / Ctrl+H)")
         hide_btn.clicked.connect(self.hide_to_tray)
         header_layout.addWidget(hide_btn)
 
         # 삭제 버튼
         del_btn = QPushButton("✕")
-        del_btn.setFixedSize(26, 26)
+        del_btn.setFixedSize(24, 24)
         del_btn.setToolTip("삭제 (Ctrl+D)")
         del_btn.clicked.connect(self.delete_note)
         header_layout.addWidget(del_btn)
@@ -542,7 +544,7 @@ class StickyTrayManager:
             is_alarm_enabled=0,
             x=x,
             y=y,
-            w=340,
+            w=380,
             h=300,
         )
         active_windows.append(w)
@@ -707,7 +709,7 @@ def main():
                 is_alarm_enabled=row[6] or 0,
                 x=row[7],
                 y=row[8],
-                w=row[9],
+                w=max(360, row[9]),
                 h=row[10],
             )
             active_windows.append(w)
@@ -724,7 +726,7 @@ def main():
             is_alarm_enabled=0,
             x=200,
             y=200,
-            w=340,
+            w=380,
             h=300,
         )
         active_windows.append(initial_note)
