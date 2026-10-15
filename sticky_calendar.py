@@ -1,7 +1,7 @@
 import sys
 import sqlite3
 import random
-from datetime import date
+from datetime import date, datetime
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -10,14 +10,20 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QWidget,
     QDateEdit,
+    QTimeEdit,
     QPushButton,
     QToolButton,
     QMenu,
     QGraphicsDropShadowEffect,
     QSystemTrayIcon,
 )
-from PyQt6.QtCore import QDate, Qt, QPoint
+from PyQt6.QtCore import QDate, QTime, Qt, QPoint, QTimer
 from PyQt6.QtGui import QColor, QFont, QAction, QIcon, QPixmap, QPainter, QBrush, QPen
+
+try:
+    import winsound
+except ImportError:
+    winsound = None
 
 DB_PATH = "sticky_notes.db"
 
@@ -64,9 +70,11 @@ def init_db():
         CREATE TABLE IF NOT EXISTS sticky_notes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             target_date TEXT,
+            target_time TEXT DEFAULT '',
             content TEXT,
             color TEXT,
             is_pinned INTEGER,
+            is_alarm_enabled INTEGER DEFAULT 0,
             pos_x INTEGER,
             pos_y INTEGER,
             width INTEGER,
@@ -75,16 +83,26 @@ def init_db():
         """
     )
     conn.commit()
+
+    # 기존 DB에 컬럼이 없을 경우 마이그레이션
+    cursor.execute("PRAGMA table_info(sticky_notes)")
+    cols = [col[1] for col in cursor.fetchall()]
+    if "target_time" not in cols:
+        cursor.execute("ALTER TABLE sticky_notes ADD COLUMN target_time TEXT DEFAULT ''")
+    if "is_alarm_enabled" not in cols:
+        cursor.execute("ALTER TABLE sticky_notes ADD COLUMN is_alarm_enabled INTEGER DEFAULT 0")
+    conn.commit()
     conn.close()
 
 active_windows = []
 
 class StickyNoteWindow(QMainWindow):
-    def __init__(self, note_id=None, target_date=None, content="", color="yellow", is_pinned=0, x=150, y=150, w=320, h=300):
+    def __init__(self, note_id=None, target_date=None, target_time="", content="", color="yellow", is_pinned=0, is_alarm_enabled=0, x=150, y=150, w=340, h=300):
         super().__init__()
         self.note_id = note_id
         self.current_color = color if color in PASTEL_THEMES else "yellow"
         self.is_pinned = bool(is_pinned)
+        self.is_alarm_enabled = bool(is_alarm_enabled)
         self.old_pos = None
 
         # 프레임리스 창 및 윈도우 기본 속성
@@ -117,6 +135,23 @@ class StickyNoteWindow(QMainWindow):
             self.date_picker.setDate(QDate.currentDate())
         self.date_picker.dateChanged.connect(self.auto_save)
         header_layout.addWidget(self.date_picker)
+
+        # 시간 선택기 (알람 시간)
+        self.time_picker = QTimeEdit()
+        self.time_picker.setDisplayFormat("HH:mm")
+        if target_time:
+            self.time_picker.setTime(QTime.fromString(target_time, "HH:mm"))
+        else:
+            self.time_picker.setTime(QTime.currentTime())
+        self.time_picker.timeChanged.connect(self.auto_save)
+        header_layout.addWidget(self.time_picker)
+
+        # 알람 켜기/끄기 토글 버튼 (🔔 / 🔕)
+        self.alarm_btn = QPushButton("🔔" if self.is_alarm_enabled else "🔕")
+        self.alarm_btn.setFixedSize(26, 26)
+        self.alarm_btn.setToolTip("알람 켜기/끄기 (지정 시간에 소리 및 토스트 알림)")
+        self.alarm_btn.clicked.connect(self.toggle_alarm)
+        header_layout.addWidget(self.alarm_btn)
 
         # 항상 위 핀 버튼
         self.pin_btn = QPushButton("📌" if self.is_pinned else "📍")
@@ -155,7 +190,7 @@ class StickyNoteWindow(QMainWindow):
         # 트레이로 숨기기 (최소화) 버튼
         hide_btn = QPushButton("➖")
         hide_btn.setFixedSize(26, 26)
-        hide_btn.setToolTip("트레이로 숨기기 (트레이 아이콘 클릭 시 복원)")
+        hide_btn.setToolTip("트레이로 숨기기")
         hide_btn.clicked.connect(self.hide_to_tray)
         header_layout.addWidget(hide_btn)
 
@@ -189,18 +224,20 @@ class StickyNoteWindow(QMainWindow):
 
     def apply_style(self):
         theme = PASTEL_THEMES[self.current_color]
+        alarm_style = "background-color: #FDE68A; border: 1.5px solid #F59E0B;" if self.is_alarm_enabled else ""
         style = f"""
             QWidget#centralWidget {{
                 background-color: {theme['bg']};
                 border: 1px solid {theme['border']};
                 border-radius: 8px;
             }}
-            QDateEdit {{
+            QDateEdit, QTimeEdit {{
                 background-color: {theme['header']};
                 border: 1px solid {theme['border']};
                 border-radius: 4px;
-                padding: 2px 6px;
+                padding: 2px 4px;
                 font-weight: bold;
+                font-size: 11px;
                 color: {theme['text']};
             }}
             QPushButton, QToolButton {{
@@ -209,6 +246,9 @@ class StickyNoteWindow(QMainWindow):
                 border-radius: 4px;
                 font-size: 11px;
                 color: {theme['text']};
+            }}
+            QPushButton#alarmBtn {{
+                {alarm_style}
             }}
             QPushButton:hover, QToolButton:hover {{
                 background-color: {theme['border']};
@@ -220,6 +260,7 @@ class StickyNoteWindow(QMainWindow):
                 line-height: 1.4;
             }}
         """
+        self.alarm_btn.setObjectName("alarmBtn")
         self.container.setObjectName("centralWidget")
         self.container.setStyleSheet(style)
 
@@ -249,6 +290,17 @@ class StickyNoteWindow(QMainWindow):
         self.show()
         self.auto_save()
 
+    def toggle_alarm(self):
+        self.is_alarm_enabled = not self.is_alarm_enabled
+        self.alarm_btn.setText("🔔" if self.is_alarm_enabled else "🔕")
+        self.apply_style()
+        self.auto_save()
+
+        target_dt = f"{self.date_picker.date().toString('yyyy-MM-dd')} {self.time_picker.time().toString('HH:mm')}"
+        if self.is_alarm_enabled:
+            if hasattr(QApplication.instance(), "tray_manager"):
+                QApplication.instance().tray_manager.notify("알람 설정 완료", f"{target_dt}에 소리 및 알림이 울립니다.")
+
     def change_color(self, new_color):
         self.current_color = new_color
         self.apply_style()
@@ -270,19 +322,22 @@ class StickyNoteWindow(QMainWindow):
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         current_date = self.date_picker.date().toString("yyyy-MM-dd")
+        current_time = self.time_picker.time().toString("HH:mm")
         current_text = self.text_edit.toPlainText()
         geo = self.geometry()
 
         cursor.execute(
             """
-            INSERT INTO sticky_notes (target_date, content, color, is_pinned, pos_x, pos_y, width, height)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO sticky_notes (target_date, target_time, content, color, is_pinned, is_alarm_enabled, pos_x, pos_y, width, height)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 current_date,
+                current_time,
                 current_text,
                 self.current_color,
                 1 if self.is_pinned else 0,
+                1 if self.is_alarm_enabled else 0,
                 geo.x(),
                 geo.y(),
                 geo.width(),
@@ -299,20 +354,23 @@ class StickyNoteWindow(QMainWindow):
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         current_date = self.date_picker.date().toString("yyyy-MM-dd")
+        current_time = self.time_picker.time().toString("HH:mm")
         current_text = self.text_edit.toPlainText()
         geo = self.geometry()
 
         cursor.execute(
             """
             UPDATE sticky_notes
-            SET target_date = ?, content = ?, color = ?, is_pinned = ?, pos_x = ?, pos_y = ?, width = ?, height = ?
+            SET target_date = ?, target_time = ?, content = ?, color = ?, is_pinned = ?, is_alarm_enabled = ?, pos_x = ?, pos_y = ?, width = ?, height = ?
             WHERE id = ?
             """,
             (
                 current_date,
+                current_time,
                 current_text,
                 self.current_color,
                 1 if self.is_pinned else 0,
+                1 if self.is_alarm_enabled else 0,
                 geo.x(),
                 geo.y(),
                 geo.width(),
@@ -341,9 +399,11 @@ class StickyNoteWindow(QMainWindow):
         new_window = StickyNoteWindow(
             note_id=None,
             target_date=date.today().isoformat(),
+            target_time=datetime.now().strftime("%H:%M"),
             content="",
             color=random_color,
             is_pinned=0,
+            is_alarm_enabled=0,
             x=geo.x() + 35,
             y=geo.y() + 35,
             w=geo.width(),
@@ -354,10 +414,11 @@ class StickyNoteWindow(QMainWindow):
 
 
 class StickyTrayManager:
-    """시스템 트레이 아이콘 및 메뉴 관리자"""
+    """시스템 트레이 아이콘 및 메뉴 & 알람 스케줄러 관리자"""
     def __init__(self, app):
         self.app = app
         self.tray_icon = QSystemTrayIcon(app)
+        self.triggered_alarms = set() # (note_id, yyyy-mm-dd hh:mm) 방지용
         
         # 트레이 아이콘 설정
         icon = QIcon(create_tray_icon_pixmap())
@@ -391,6 +452,53 @@ class StickyTrayManager:
         self.tray_icon.activated.connect(self.on_tray_activated)
         self.tray_icon.show()
 
+        # 1초마다 알람 트리거 검사 타이머
+        self.alarm_timer = QTimer()
+        self.alarm_timer.timeout.connect(self.check_alarms)
+        self.alarm_timer.start(1000)
+
+    def check_alarms(self):
+        """설정된 날짜 및 시간에 알람 사운드 및 팝업 토스트 트리거"""
+        now = datetime.now()
+        current_date = now.strftime("%Y-%m-%d")
+        current_time = now.strftime("%H:%M")
+
+        for w in list(active_windows):
+            if not w.is_alarm_enabled:
+                continue
+
+            note_date = w.date_picker.date().toString("yyyy-MM-dd")
+            note_time = w.time_picker.time().toString("HH:mm")
+
+            alarm_key = (w.note_id, current_date, current_time)
+
+            if note_date == current_date and note_time == current_time:
+                if alarm_key not in self.triggered_alarms:
+                    self.triggered_alarms.add(alarm_key)
+                    self.trigger_alarm(w, current_time)
+
+    def trigger_alarm(self, window, time_str):
+        """알람 사운드 재생, 창 전면 표시, 시스템 토스트 알림"""
+        # 1. 알람 사운드 재생
+        if winsound:
+            try:
+                winsound.Beep(988, 200)   # B5
+                winsound.Beep(1319, 400)  # E6
+            except Exception:
+                QApplication.beep()
+        else:
+            QApplication.beep()
+
+        # 2. 창 활성화 및 전면 표시
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+        # 3. 토스트 알림 발송
+        content_preview = window.text_edit.toPlainText().strip()
+        first_line = content_preview.split('\n')[0][:50] if content_preview else "일정 메모 알람입니다."
+        self.notify(f"⏰ [일정 알람] {time_str}", first_line)
+
     def on_tray_activated(self, reason):
         if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
             self.toggle_all_notes()
@@ -418,12 +526,14 @@ class StickyTrayManager:
         w = StickyNoteWindow(
             note_id=None,
             target_date=date.today().isoformat(),
+            target_time=datetime.now().strftime("%H:%M"),
             content="",
             color=random_color,
             is_pinned=0,
+            is_alarm_enabled=0,
             x=200 + random.randint(0, 100),
             y=150 + random.randint(0, 100),
-            w=320,
+            w=340,
             h=300,
         )
         active_windows.append(w)
@@ -441,7 +551,7 @@ class StickyTrayManager:
 
         start_x, start_y = 50, 50
         gap = 20
-        col_w, row_h = 330, 310
+        col_w, row_h = 350, 310
         max_cols = 4
 
         for idx, w in enumerate(visible_windows):
@@ -454,7 +564,7 @@ class StickyTrayManager:
 
     def notify(self, title, message):
         """풍선 도움말 토스트 알림"""
-        self.tray_icon.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 2000)
+        self.tray_icon.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 4000)
 
     def exit_app(self):
         """프로그램 완전 종료"""
@@ -477,7 +587,7 @@ def main():
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, target_date, content, color, is_pinned, pos_x, pos_y, width, height
+        SELECT id, target_date, target_time, content, color, is_pinned, is_alarm_enabled, pos_x, pos_y, width, height
         FROM sticky_notes
         """
     )
@@ -489,13 +599,15 @@ def main():
             w = StickyNoteWindow(
                 note_id=row[0],
                 target_date=row[1],
-                content=row[2],
-                color=row[3],
-                is_pinned=row[4],
-                x=row[5],
-                y=row[6],
-                w=row[7],
-                h=row[8],
+                target_time=row[2] or "",
+                content=row[3],
+                color=row[4],
+                is_pinned=row[5],
+                is_alarm_enabled=row[6] or 0,
+                x=row[7],
+                y=row[8],
+                w=row[9],
+                h=row[10],
             )
             active_windows.append(w)
             w.show()
@@ -504,19 +616,21 @@ def main():
         initial_note = StickyNoteWindow(
             note_id=None,
             target_date=date.today().isoformat(),
-            content="[ ] 오늘 할 일 1\n[ ] 오늘 할 일 2",
+            target_time=datetime.now().strftime("%H:%M"),
+            content="[ ] 오늘 할 일 1\n[ ] 오늘 할 일 2\n[ ] 상단 🔔 버튼으로 알람 켜기",
             color="yellow",
             is_pinned=0,
+            is_alarm_enabled=0,
             x=200,
             y=200,
-            w=320,
+            w=340,
             h=300,
         )
         active_windows.append(initial_note)
         initial_note.show()
 
     # 트레이 실행 안내 알림
-    tray_manager.notify("스티커 메모 캘린더 시작", "시스템 트레이에 등록되었습니다. 아이콘을 클릭하여 모든 메모를 숨기거나 표시할 수 있습니다.")
+    tray_manager.notify("스티커 메모 캘린더 시작", "시스템 트레이에 등록되었습니다. 알람 시간 설정 시 소리 및 팝업 알림이 제공됩니다.")
 
     sys.exit(app.exec())
 

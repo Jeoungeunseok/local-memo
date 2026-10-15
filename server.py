@@ -24,9 +24,11 @@ def init_db():
         CREATE TABLE IF NOT EXISTS sticky_notes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             target_date TEXT,
+            target_time TEXT DEFAULT '',
             content TEXT,
             color TEXT,
             is_pinned INTEGER,
+            is_alarm_enabled INTEGER DEFAULT 0,
             pos_x INTEGER,
             pos_y INTEGER,
             width INTEGER,
@@ -35,15 +37,26 @@ def init_db():
         """
     )
     conn.commit()
+
+    # 기존 DB에 컬럼이 없을 경우 마이그레이션
+    cursor.execute("PRAGMA table_info(sticky_notes)")
+    cols = [col["name"] for col in cursor.fetchall()]
+    if "target_time" not in cols:
+        cursor.execute("ALTER TABLE sticky_notes ADD COLUMN target_time TEXT DEFAULT ''")
+    if "is_alarm_enabled" not in cols:
+        cursor.execute("ALTER TABLE sticky_notes ADD COLUMN is_alarm_enabled INTEGER DEFAULT 0")
+    conn.commit()
     conn.close()
 
 init_db()
 
 class NoteCreate(BaseModel):
     target_date: Optional[str] = None
+    target_time: Optional[str] = ""
     content: Optional[str] = ""
     color: Optional[str] = "yellow"
     is_pinned: Optional[int] = 0
+    is_alarm_enabled: Optional[int] = 0
     pos_x: Optional[int] = 160
     pos_y: Optional[int] = 140
     width: Optional[int] = 320
@@ -51,9 +64,11 @@ class NoteCreate(BaseModel):
 
 class NoteUpdate(BaseModel):
     target_date: Optional[str] = None
+    target_time: Optional[str] = None
     content: Optional[str] = None
     color: Optional[str] = None
     is_pinned: Optional[int] = None
+    is_alarm_enabled: Optional[int] = None
     pos_x: Optional[int] = None
     pos_y: Optional[int] = None
     width: Optional[int] = None
@@ -78,14 +93,16 @@ def create_note(note: NoteCreate):
     target_date = note.target_date or date.today().isoformat()
     cursor.execute(
         """
-        INSERT INTO sticky_notes (target_date, content, color, is_pinned, pos_x, pos_y, width, height)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO sticky_notes (target_date, target_time, content, color, is_pinned, is_alarm_enabled, pos_x, pos_y, width, height)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             target_date,
+            note.target_time or "",
             note.content or "",
             note.color or "yellow",
             note.is_pinned or 0,
+            note.is_alarm_enabled or 0,
             note.pos_x if note.pos_x is not None else 160,
             note.pos_y if note.pos_y is not None else 140,
             note.width or 320,
@@ -110,9 +127,11 @@ def update_note(note_id: int, note: NoteUpdate):
         raise HTTPException(status_code=404, detail="Note not found")
 
     target_date = note.target_date if note.target_date is not None else current["target_date"]
+    target_time = note.target_time if note.target_time is not None else (current["target_time"] if "target_time" in current.keys() else "")
     content = note.content if note.content is not None else current["content"]
     color = note.color if note.color is not None else current["color"]
     is_pinned = note.is_pinned if note.is_pinned is not None else current["is_pinned"]
+    is_alarm_enabled = note.is_alarm_enabled if note.is_alarm_enabled is not None else (current["is_alarm_enabled"] if "is_alarm_enabled" in current.keys() else 0)
     pos_x = note.pos_x if note.pos_x is not None else current["pos_x"]
     pos_y = note.pos_y if note.pos_y is not None else current["pos_y"]
     width = note.width if note.width is not None else current["width"]
@@ -121,10 +140,10 @@ def update_note(note_id: int, note: NoteUpdate):
     cursor.execute(
         """
         UPDATE sticky_notes
-        SET target_date = ?, content = ?, color = ?, is_pinned = ?, pos_x = ?, pos_y = ?, width = ?, height = ?
+        SET target_date = ?, target_time = ?, content = ?, color = ?, is_pinned = ?, is_alarm_enabled = ?, pos_x = ?, pos_y = ?, width = ?, height = ?
         WHERE id = ?
         """,
-        (target_date, content, color, is_pinned, pos_x, pos_y, width, height, note_id),
+        (target_date, target_time, content, color, is_pinned, is_alarm_enabled, pos_x, pos_y, width, height, note_id),
     )
     conn.commit()
     cursor.execute("SELECT * FROM sticky_notes WHERE id = ?", (note_id,))

@@ -74,6 +74,9 @@ async function initApp() {
 
   // Render Calendar
   renderCalendar();
+
+  // Start background alarm checking loop (every 1 second)
+  setInterval(checkWebAlarms, 1000);
 }
 
 // Event Listeners Setup
@@ -286,8 +289,10 @@ function createNoteElement(note) {
     <div class="note-header">
       <div class="header-meta">
         <input type="date" class="note-date-input" value="${note.target_date || getTodayIsoString()}" title="일정 날짜">
+        <input type="time" class="note-time-input" value="${note.target_time || '09:00'}" title="알람 시간">
       </div>
       <div class="note-actions">
+        <button class="note-tool-btn alarm-btn ${note.is_alarm_enabled ? 'alarm-active' : ''}" title="알람 켜기/끄기">${note.is_alarm_enabled ? '🔔' : '🔕'}</button>
         <button class="note-tool-btn mode-btn" title="체크박스/텍스트 모드 전환">${isTodoMode ? '📝' : '☑️'}</button>
         <button class="note-tool-btn pin-btn ${note.is_pinned ? 'pinned-active' : ''}" title="항상 위 고정">${note.is_pinned ? '📌' : '📍'}</button>
         <div class="color-menu-container" style="position: relative; display: inline-block;">
@@ -329,6 +334,8 @@ function createNoteElement(note) {
 function attachNoteEvents(noteEl, note) {
   const header = noteEl.querySelector('.note-header');
   const dateInput = noteEl.querySelector('.note-date-input');
+  const timeInput = noteEl.querySelector('.note-time-input');
+  const alarmBtn = noteEl.querySelector('.alarm-btn');
   const pinBtn = noteEl.querySelector('.pin-btn');
   const colorBtn = noteEl.querySelector('.color-btn');
   const colorDropdown = noteEl.querySelector('.color-dropdown');
@@ -351,6 +358,35 @@ function attachNoteEvents(noteEl, note) {
     debouncedSave(note);
     renderCalendar();
   });
+
+  // Time Change
+  if (timeInput) {
+    timeInput.addEventListener('change', (e) => {
+      note.target_time = e.target.value;
+      debouncedSave(note);
+    });
+  }
+
+  // Alarm Toggle
+  if (alarmBtn) {
+    alarmBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      note.is_alarm_enabled = note.is_alarm_enabled ? 0 : 1;
+      if (note.is_alarm_enabled) {
+        alarmBtn.classList.add('alarm-active');
+        alarmBtn.textContent = '🔔';
+        playAlarmChime();
+        if ('Notification' in window && Notification.permission === 'default') {
+          Notification.requestPermission();
+        }
+        showToastNotification('알람 켜짐', `${note.target_date || getTodayIsoString()} ${note.target_time || '09:00'}에 알람이 울립니다.`, note.id);
+      } else {
+        alarmBtn.classList.remove('alarm-active');
+        alarmBtn.textContent = '🔕';
+      }
+      debouncedSave(note);
+    });
+  }
 
   // Pin Toggle
   pinBtn.addEventListener('click', (e) => {
@@ -667,9 +703,11 @@ function debouncedSave(note) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           target_date: note.target_date,
+          target_time: note.target_time,
           content: note.content,
           color: note.color,
           is_pinned: note.is_pinned,
+          is_alarm_enabled: note.is_alarm_enabled,
           pos_x: note.pos_x,
           pos_y: note.pos_y,
           width: note.width,
@@ -689,15 +727,19 @@ function debouncedSave(note) {
 async function createNewNote(defaults = {}) {
   const randomColor = PASTEL_THEMES[Math.floor(Math.random() * PASTEL_THEMES.length)];
   const today = getTodayIsoString();
+  const now = new Date();
+  const defaultTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
   const newNoteData = {
     target_date: defaults.target_date || today,
+    target_time: defaults.target_time || defaultTime,
     content: defaults.content || '',
     color: defaults.color || randomColor,
     is_pinned: defaults.is_pinned || 0,
+    is_alarm_enabled: defaults.is_alarm_enabled || 0,
     pos_x: defaults.pos_x || (150 + Math.floor(Math.random() * 80)),
     pos_y: defaults.pos_y || (120 + Math.floor(Math.random() * 80)),
-    width: defaults.width || 320,
+    width: defaults.width || 340,
     height: defaults.height || 280
   };
 
@@ -970,6 +1012,139 @@ function escapeHtml(text) {
     "'": '&#039;'
   };
   return (text || '').replace(/[&<>"']/g, m => map[m]);
+}
+
+// Web Audio API synthesized crystal chime melody
+function playAlarmChime() {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+    const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6 chime
+    notes.forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + idx * 0.12);
+      gain.gain.setValueAtTime(0.25, ctx.currentTime + idx * 0.12);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + idx * 0.12 + 0.35);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + idx * 0.12);
+      osc.stop(ctx.currentTime + idx * 0.12 + 0.4);
+    });
+  } catch (err) {
+    console.warn('Audio playback error:', err);
+  }
+}
+
+// In-App Toast Notification
+function showToastNotification(title, message, noteId) {
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+
+  const toast = document.createElement('div');
+  toast.className = 'toast-card';
+  toast.innerHTML = `
+    <div class="toast-header">
+      <span class="toast-title">⏰ ${escapeHtml(title)}</span>
+      <button class="toast-close-btn" title="닫기">✕</button>
+    </div>
+    <div class="toast-body">${escapeHtml(message)}</div>
+    <div class="toast-actions">
+      ${noteId ? `<button class="toast-btn toast-btn-primary focus-btn">메모로 이동</button>` : ''}
+      <button class="toast-btn toast-btn-secondary close-btn">확인</button>
+    </div>
+  `;
+
+  // Focus note on button click
+  if (noteId) {
+    const focusBtn = toast.querySelector('.focus-btn');
+    if (focusBtn) {
+      focusBtn.addEventListener('click', () => {
+        const el = document.getElementById(`note-${noteId}`);
+        if (el) {
+          el.classList.remove('minimized');
+          updateDockState();
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('alarm-alerting');
+          setTimeout(() => el.classList.remove('alarm-alerting'), 6000);
+          el.style.zIndex = ++highestZIndex;
+        }
+        toast.remove();
+      });
+    }
+  }
+
+  // Close toast handler
+  const closeBtn = toast.querySelector('.close-btn');
+  const xBtn = toast.querySelector('.toast-close-btn');
+  const dismiss = () => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(50px)';
+    setTimeout(() => toast.remove(), 250);
+  };
+  if (closeBtn) closeBtn.addEventListener('click', dismiss);
+  if (xBtn) xBtn.addEventListener('click', dismiss);
+
+  // Auto dismiss after 8 seconds
+  setTimeout(dismiss, 8000);
+
+  container.appendChild(toast);
+}
+
+// Background Alarm Checker
+const triggeredWebAlarms = new Set();
+function checkWebAlarms() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');
+  const mins = String(now.getMinutes()).padStart(2, '0');
+
+  const currentDate = `${year}-${month}-${day}`;
+  const currentTime = `${hours}:${mins}`;
+
+  notes.forEach(note => {
+    if (!note.is_alarm_enabled) return;
+    const noteDate = note.target_date || currentDate;
+    const noteTime = note.target_time || '09:00';
+
+    const alarmKey = `${note.id}_${currentDate}_${currentTime}`;
+
+    if (noteDate === currentDate && noteTime === currentTime) {
+      if (!triggeredWebAlarms.has(alarmKey)) {
+        triggeredWebAlarms.add(alarmKey);
+        
+        // Play Chime
+        playAlarmChime();
+
+        // Highlight Note
+        const el = document.getElementById(`note-${note.id}`);
+        if (el) {
+          el.classList.remove('minimized');
+          updateDockState();
+          el.classList.add('alarm-alerting');
+          setTimeout(() => el.classList.remove('alarm-alerting'), 8000);
+          el.style.zIndex = ++highestZIndex;
+        }
+
+        // Preview text
+        const preview = (note.content || '일정 알람 시간입니다!').split('\n')[0].slice(0, 40);
+
+        // In-App Toast
+        showToastNotification(`[일정 알람] ${currentTime}`, preview, note.id);
+
+        // Native Desktop Web Notification if allowed
+        if ('Notification' in window && Notification.permission === 'granted') {
+          new Notification(`⏰ [일정 알람] ${currentTime}`, {
+            body: preview
+          });
+        }
+      }
+    }
+  });
 }
 
 // Start
