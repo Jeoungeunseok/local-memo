@@ -203,32 +203,62 @@ class GlobalHotkeyThread(QThread):
 
 
 class TodoItemWidget(QWidget):
-    """인터랙티브 체크박스 할 일 항목 위젯 (체크, 취소선, 텍스트 수정, 개별 삭제 지원)"""
+    """인터랙티브 체크박스 할 일 항목 위젯 (체크, 취소선, 개별 시간 지정, 텍스트 수정, 개별 삭제 지원)"""
     changed_signal = pyqtSignal()
     delete_signal = pyqtSignal(object)
     create_next_signal = pyqtSignal(object)
 
-    def __init__(self, checked=False, text="", text_color="#333333", parent=None):
+    def __init__(self, checked=False, time_str=None, text="", text_color="#333333", parent=None):
         super().__init__(parent)
         self.text_color = text_color
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 3, 4, 3)
-        layout.setSpacing(6)
+        self.has_time = bool(time_str)
 
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(4)
+
+        # 1. 완료 체크박스
         self.checkbox = QCheckBox()
         self.checkbox.setChecked(checked)
         self.checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
         self.checkbox.stateChanged.connect(self.on_check_changed)
         layout.addWidget(self.checkbox)
 
+        # 2. 개별 시간 토글 버튼 (⏰)
+        self.time_btn = QPushButton("⏰")
+        self.time_btn.setFixedSize(22, 22)
+        self.time_btn.setToolTip("이 할 일의 개별 알람 시간 지정 / 해제 (클릭)")
+        self.time_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.time_btn.clicked.connect(self.toggle_time)
+        layout.addWidget(self.time_btn)
+
+        # 3. 개별 시간 편집기 (QTimeEdit)
+        self.time_edit = QTimeEdit()
+        self.time_edit.setDisplayFormat("HH:mm")
+        self.time_edit.setFixedSize(56, 22)
+        self.time_edit.setToolTip("할 일 시작 및 알람 시간")
+        if time_str:
+            t = QTime.fromString(time_str, "HH:mm")
+            if t.isValid():
+                self.time_edit.setTime(t)
+            else:
+                self.time_edit.setTime(QTime.currentTime())
+        else:
+            self.time_edit.setTime(QTime.currentTime())
+        self.time_edit.timeChanged.connect(lambda: self.changed_signal.emit())
+        self.time_edit.setVisible(self.has_time)
+        layout.addWidget(self.time_edit)
+
+        # 4. 할 일 내용 입력 (QLineEdit)
         self.line_edit = QLineEdit(text)
         self.line_edit.setPlaceholderText("할 일 내용 입력...")
         self.line_edit.setFont(QFont("Malgun Gothic", 10))
-        self.line_edit.textChanged.connect(lambda: self.changed_signal.emit())
+        self.line_edit.textChanged.connect(self.on_text_changed)
         self.line_edit.returnPressed.connect(lambda: self.create_next_signal.emit(self))
         self.line_edit.installEventFilter(self)
         layout.addWidget(self.line_edit, stretch=1)
 
+        # 5. 개별 삭제 버튼 (✕)
         self.del_btn = QPushButton("✕")
         self.del_btn.setFixedSize(22, 22)
         self.del_btn.setToolTip("이 할 일 삭제")
@@ -250,7 +280,58 @@ class TodoItemWidget(QWidget):
         self.del_btn.clicked.connect(lambda: self.delete_signal.emit(self))
         layout.addWidget(self.del_btn)
 
+        self.update_time_btn_style()
         self.update_style(checked)
+
+    def toggle_time(self):
+        self.has_time = not self.has_time
+        self.time_edit.setVisible(self.has_time)
+        self.update_time_btn_style()
+        self.changed_signal.emit()
+
+    def update_time_btn_style(self):
+        if self.has_time:
+            self.time_btn.setStyleSheet("""
+                QPushButton {
+                    background: #3b82f6;
+                    color: white;
+                    border: 1px solid #2563eb;
+                    border-radius: 4px;
+                    font-size: 11px;
+                }
+            """)
+        else:
+            self.time_btn.setStyleSheet("""
+                QPushButton {
+                    background: rgba(0, 0, 0, 0.04);
+                    color: #94a3b8;
+                    border: 1px solid rgba(0, 0, 0, 0.08);
+                    border-radius: 4px;
+                    font-size: 11px;
+                }
+                QPushButton:hover {
+                    background: rgba(59, 130, 246, 0.15);
+                    color: #3b82f6;
+                }
+            """)
+
+    def on_text_changed(self):
+        # 텍스트에 "14:00 미팅" 또는 "[14:00] 미팅" 형태가 입력되면 자동으로 시간 인식
+        txt = self.line_edit.text()
+        m = re.match(r'^\[?(\d{1,2}:\d{2})\]?\s+(.*)$', txt)
+        if m:
+            t_str = m.group(1)
+            rest_txt = m.group(2)
+            t = QTime.fromString(t_str, "HH:mm")
+            if t.isValid():
+                self.time_edit.setTime(t)
+                self.has_time = True
+                self.time_edit.setVisible(True)
+                self.update_time_btn_style()
+                self.line_edit.blockSignals(True)
+                self.line_edit.setText(rest_txt)
+                self.line_edit.blockSignals(False)
+        self.changed_signal.emit()
 
     def on_check_changed(self, state):
         is_checked = (state == Qt.CheckState.Checked.value or state == 2)
@@ -280,19 +361,36 @@ class TodoItemWidget(QWidget):
     def is_checked(self):
         return self.checkbox.isChecked()
 
+    def get_time(self):
+        if self.has_time:
+            return self.time_edit.time().toString("HH:mm")
+        return None
+
     def get_text(self):
         return self.line_edit.text().strip()
 
+    def get_serialized_line(self):
+        check_str = "[x]" if self.checkbox.isChecked() else "[ ]"
+        txt = self.line_edit.text().strip()
+        if self.has_time:
+            time_str = self.time_edit.time().toString("HH:mm")
+            return f"{check_str} [{time_str}] {txt}"
+        else:
+            return f"{check_str} {txt}"
 
-class CalendarDialog(QDialog):
-    """월간 달력 뷰 및 날짜별 메모 모아보기 팝업"""
+
+class CalendarWindow(QMainWindow):
+    """월간 달력 뷰 및 날짜별 메모 모아보기 (비모달 독립 윈도우)"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("📅 캘린더 뷰 - 월간 일정 및 메모")
-        self.resize(520, 580)
+        self.resize(540, 600)
         self.setMinimumSize(480, 520)
 
-        layout = QVBoxLayout(self)
+        container = QWidget(self)
+        self.setCentralWidget(container)
+
+        layout = QVBoxLayout(container)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
 
@@ -305,7 +403,8 @@ class CalendarDialog(QDialog):
 
         close_btn = QPushButton("✕")
         close_btn.setFixedSize(26, 26)
-        close_btn.clicked.connect(self.accept)
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.clicked.connect(self.close)
         title_layout.addWidget(close_btn)
         layout.addLayout(title_layout)
 
@@ -317,7 +416,7 @@ class CalendarDialog(QDialog):
         layout.addWidget(self.calendar)
 
         # 요약 레이블
-        self.summary_label = QLabel("📌 날짜를 클릭하면 해당 일자의 메모가 표시됩니다:")
+        self.summary_label = QLabel("📌 날짜를 클릭하면 해당 일자의 메모 및 할 일이 표시됩니다:")
         self.summary_label.setFont(QFont("Malgun Gothic", 10, QFont.Weight.Bold))
         layout.addWidget(self.summary_label)
 
@@ -326,14 +425,14 @@ class CalendarDialog(QDialog):
         self.notes_list.itemDoubleClicked.connect(self.on_item_double_clicked)
         self.notes_list.setStyleSheet("""
             QListWidget {
-                background: rgba(255, 255, 255, 0.9);
+                background: rgba(255, 255, 255, 0.95);
                 border: 1px solid #cbd5e1;
                 border-radius: 8px;
                 padding: 6px;
                 font-size: 13px;
             }
             QListWidget::item {
-                padding: 6px 8px;
+                padding: 5px 8px;
                 border-bottom: 1px solid #f1f5f9;
                 border-radius: 4px;
             }
@@ -350,13 +449,15 @@ class CalendarDialog(QDialog):
         # 하단 액션 버튼
         btn_layout = QHBoxLayout()
         self.new_note_btn = QPushButton("➕ 선택한 날짜에 새 메모 만들기")
+        self.new_note_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.new_note_btn.setStyleSheet("padding: 7px 14px; font-weight: bold; background: #3b82f6; color: white; border-radius: 6px;")
         self.new_note_btn.clicked.connect(self.create_note_for_selected_date)
         btn_layout.addWidget(self.new_note_btn)
 
         close_bottom_btn = QPushButton("닫기")
+        close_bottom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_bottom_btn.setStyleSheet("padding: 7px 14px; border-radius: 6px;")
-        close_bottom_btn.clicked.connect(self.accept)
+        close_bottom_btn.clicked.connect(self.close)
         btn_layout.addWidget(close_bottom_btn)
         layout.addLayout(btn_layout)
 
@@ -364,10 +465,19 @@ class CalendarDialog(QDialog):
         self.highlight_calendar_dates()
         self.on_date_selected()
 
+    def select_date(self, date_str):
+        qdate = QDate.fromString(date_str, "yyyy-MM-dd")
+        if qdate.isValid():
+            self.calendar.setSelectedDate(qdate)
+            self.on_date_selected()
+
     def apply_theme(self):
         self.setStyleSheet("""
-            QDialog {
+            QMainWindow {
                 background-color: #F8FAFC;
+                color: #1E293B;
+            }
+            QWidget {
                 color: #1E293B;
             }
             QCalendarWidget QWidget {
@@ -423,28 +533,61 @@ class CalendarDialog(QDialog):
         rows = cursor.fetchall()
         conn.close()
 
-        count = len(rows)
-        self.summary_label.setText(f"📌 {sel_date} 일정 메모 ({count}개): (더블클릭 시 해당 메모 열기)")
-
         if not rows:
-            item = QListWidgetItem("등록된 메모가 없습니다. 아래 버튼으로 추가해보세요!")
+            self.summary_label.setText(f"📌 {sel_date} 등록된 메모 없음")
+            item = QListWidgetItem("등록된 메모나 할 일이 없습니다. 아래 버튼으로 추가해보세요!")
             item.setFlags(Qt.ItemFlag.NoItemFlags)
             self.notes_list.addItem(item)
             return
 
+        total_items_count = 0
         for row in rows:
             note_id, content, color, target_time, is_pinned, is_alarm = row
-            time_str = f"[{target_time}] " if target_time else ""
+            lines = [l.strip() for l in content.split('\n') if l.strip()]
+
             pin_str = "📌 " if is_pinned else ""
             alarm_str = "🔔 " if is_alarm else ""
-            first_line = content.split('\n')[0] if content else "(빈 메모)"
-            if len(first_line) > 35:
-                first_line = first_line[:35] + "..."
-            
-            display_text = f"{pin_str}{alarm_str}{time_str}{first_line}"
-            item = QListWidgetItem(display_text)
-            item.setData(Qt.ItemDataRole.UserRole, note_id)
-            self.notes_list.addItem(item)
+            time_str = f"[{target_time}] " if target_time else ""
+            color_name = color.capitalize() if color else "메모"
+
+            # 메모 헤더 아이템
+            header_item = QListWidgetItem(f"{pin_str}{alarm_str}📝 {color_name} 메모 {time_str}")
+            header_item.setFont(QFont("Malgun Gothic", 10, QFont.Weight.Bold))
+            header_item.setData(Qt.ItemDataRole.UserRole, note_id)
+            header_item.setBackground(QColor("#e2e8f0"))
+            self.notes_list.addItem(header_item)
+
+            if not lines:
+                sub_item = QListWidgetItem("   (빈 메모)")
+                sub_item.setData(Qt.ItemDataRole.UserRole, note_id)
+                self.notes_list.addItem(sub_item)
+                total_items_count += 1
+            else:
+                for line in lines:
+                    total_items_count += 1
+                    m = re.match(r'^\[([ xX])\]\s*(?:\[(\d{1,2}:\d{2})\]\s*|(\d{1,2}:\d{2})\s+)?(.*)$', line)
+                    if m:
+                        is_checked = (m.group(1).lower() == 'x')
+                        item_time = m.group(2) or m.group(3)
+                        item_txt = m.group(4)
+
+                        status_str = "☑️" if is_checked else "⬜"
+                        t_str = f"[{item_time}] " if item_time else ""
+                        check_label = f"   {status_str} {t_str}{item_txt}"
+                        if is_checked:
+                            check_label += " (완료)"
+
+                        sub_item = QListWidgetItem(check_label)
+                        sub_item.setData(Qt.ItemDataRole.UserRole, note_id)
+                        if is_checked:
+                            sub_item.setForeground(QColor("#94a3b8"))
+                        self.notes_list.addItem(sub_item)
+                    else:
+                        sub_item = QListWidgetItem(f"   • {line}")
+                        sub_item.setData(Qt.ItemDataRole.UserRole, note_id)
+                        self.notes_list.addItem(sub_item)
+
+        self.summary_label.setText(f"📌 {sel_date} 일정 & 할 일 ({len(rows)}개 메모, 총 {total_items_count}개 항목): (더블클릭 시 열기)")
 
     def on_item_double_clicked(self, item):
         note_id = item.data(Qt.ItemDataRole.UserRole)
@@ -454,7 +597,6 @@ class CalendarDialog(QDialog):
                     w.show()
                     w.raise_()
                     w.activateWindow()
-                    self.accept()
                     return
 
     def create_note_for_selected_date(self):
@@ -479,7 +621,7 @@ class StickyNoteWindow(QMainWindow):
         self.todo_items = []
 
         # 프레임리스 창 및 윈도우 기본 속성
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.SubWindow)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMinimumWidth(380)
         self.setMinimumHeight(240)
@@ -657,9 +799,17 @@ class StickyNoteWindow(QMainWindow):
             self.save_initial()
 
     def open_calendar_view(self):
-        """월간 캘린더 팝업 창 띄우기"""
-        dlg = CalendarDialog(self)
-        dlg.exec()
+        """월간 캘린더 창 띄우기 (비모달)"""
+        target_dt = self.date_picker.date().toString("yyyy-MM-dd")
+        if hasattr(QApplication.instance(), "tray_manager"):
+            QApplication.instance().tray_manager.open_calendar_dialog(target_date=target_dt)
+        else:
+            if not hasattr(self, "_cal_win") or self._cal_win is None:
+                self._cal_win = CalendarWindow()
+            self._cal_win.select_date(target_dt)
+            self._cal_win.show()
+            self._cal_win.raise_()
+            self._cal_win.activateWindow()
 
     def toggle_mode(self):
         """일반 텍스트 모드 <-> 인터랙티브 체크박스 모드 상호 전환"""
@@ -683,7 +833,7 @@ class StickyNoteWindow(QMainWindow):
         self.auto_save()
 
     def populate_todo_view(self, content):
-        """문자열에서 [ ] 와 [x] 파싱하여 체크박스 항목 위젯들 생성"""
+        """문자열에서 [ ] 와 [x] 및 [HH:mm] 파싱하여 체크박스 항목 위젯들 생성"""
         theme = PASTEL_THEMES[self.current_color]
         # 기존 아이템 제거
         for item in list(self.todo_items):
@@ -693,24 +843,32 @@ class StickyNoteWindow(QMainWindow):
 
         lines = [l.strip() for l in content.split('\n') if l.strip()]
         for line in lines:
-            m = re.match(r'^\[([ xX])\]\s*(.*)$', line)
+            m = re.match(r'^\[([ xX])\]\s*(?:\[(\d{1,2}:\d{2})\]\s*|(\d{1,2}:\d{2})\s+)?(.*)$', line)
             if m:
                 checked = (m.group(1).lower() == 'x')
-                txt = m.group(2)
+                time_str = m.group(2) or m.group(3)
+                txt = m.group(4)
             else:
-                checked = False
-                txt = line
-            self.add_todo_item_widget(checked, txt)
+                m2 = re.match(r'^(?:\[(\d{1,2}:\d{2})\]\s*|(\d{1,2}:\d{2})\s+)(.*)$', line)
+                if m2:
+                    checked = False
+                    time_str = m2.group(1) or m2.group(2)
+                    txt = m2.group(3)
+                else:
+                    checked = False
+                    time_str = None
+                    txt = line
+            self.add_todo_item_widget(checked, time_str, txt)
 
         if not self.todo_items:
             # 빈 경우 기본 한 줄 추가
-            self.add_todo_item_widget(False, "")
+            self.add_todo_item_widget(False, None, "")
 
         self.update_todo_footer()
 
-    def add_todo_item_widget(self, checked=False, text=""):
+    def add_todo_item_widget(self, checked=False, time_str=None, text=""):
         theme = PASTEL_THEMES[self.current_color]
-        item = TodoItemWidget(checked, text, text_color=theme['text'])
+        item = TodoItemWidget(checked, time_str, text, text_color=theme['text'])
         item.changed_signal.connect(self.on_todo_changed)
         item.delete_signal.connect(self.remove_todo_item_widget)
         item.create_next_signal.connect(self.create_next_todo_item)
@@ -721,7 +879,14 @@ class StickyNoteWindow(QMainWindow):
     def on_add_input_enter(self):
         txt = self.add_todo_input.text().strip()
         if txt:
-            item = self.add_todo_item_widget(False, txt)
+            m = re.match(r'^\[?(\d{1,2}:\d{2})\]?\s+(.*)$', txt)
+            if m:
+                time_str = m.group(1)
+                item_txt = m.group(2)
+            else:
+                time_str = None
+                item_txt = txt
+            item = self.add_todo_item_widget(False, time_str, item_txt)
             self.add_todo_input.clear()
             self.update_todo_footer()
             self.auto_save()
@@ -729,7 +894,7 @@ class StickyNoteWindow(QMainWindow):
     def create_next_todo_item(self, current_item):
         """Enter 키 입력 시 바로 아래에 새 할 일 추가 및 포커스 이동"""
         idx = self.todo_items.index(current_item) if current_item in self.todo_items else len(self.todo_items)
-        new_item = self.add_todo_item_widget(False, "")
+        new_item = self.add_todo_item_widget(False, None, "")
         # 순서 재정렬
         self.todo_items.remove(new_item)
         self.todo_items.insert(idx + 1, new_item)
@@ -778,10 +943,9 @@ class StickyNoteWindow(QMainWindow):
         if self.is_todo_mode:
             lines = []
             for item in self.todo_items:
-                check_str = "[x]" if item.is_checked() else "[ ]"
-                txt = item.get_text()
-                if txt:
-                    lines.append(f"{check_str} {txt}")
+                line_str = item.get_serialized_line()
+                if item.get_text() or item.has_time:
+                    lines.append(line_str)
             return "\n".join(lines)
         else:
             return self.text_edit.toPlainText()
@@ -837,25 +1001,33 @@ class StickyNoteWindow(QMainWindow):
                 background-color: transparent;
                 border: none;
             }}
-            QLineEdit {{
+            QLineEdit {
                 background-color: rgba(255, 255, 255, 0.4);
                 border: 1px solid rgba(0, 0, 0, 0.08);
                 border-radius: 4px;
                 padding: 4px 6px;
                 color: {theme['text']};
-            }}
-            QLineEdit:focus {{
+            }
+            QLineEdit:focus {
                 background-color: rgba(255, 255, 255, 0.85);
                 border-color: #3b82f6;
-            }}
-            QPushButton#clearCompletedBtn {{
+            }
+            QTimeEdit {
+                background-color: rgba(255, 255, 255, 0.7);
+                border: 1px solid rgba(0, 0, 0, 0.12);
+                border-radius: 4px;
+                padding: 1px 2px;
+                font-size: 11px;
+                color: {theme['text']};
+            }
+            QPushButton#clearCompletedBtn {
                 background: rgba(0, 0, 0, 0.04);
                 border: 1px solid rgba(0, 0, 0, 0.08);
                 border-radius: 4px;
                 font-size: 11px;
                 color: #64748b;
                 padding: 3px 6px;
-            }}
+            }
             QPushButton#clearCompletedBtn:hover {{
                 background: rgba(239, 68, 68, 0.15);
                 color: #ef4444;
@@ -978,6 +1150,8 @@ class StickyNoteWindow(QMainWindow):
         )
         conn.commit()
         conn.close()
+        if hasattr(QApplication.instance(), "tray_manager"):
+            QApplication.instance().tray_manager.refresh_calendar()
 
     def delete_note(self):
         if self.note_id is not None:
@@ -989,6 +1163,8 @@ class StickyNoteWindow(QMainWindow):
         if self in active_windows:
             active_windows.remove(self)
         self.close()
+        if hasattr(QApplication.instance(), "tray_manager"):
+            QApplication.instance().tray_manager.refresh_calendar()
 
     def create_new_window(self):
         geo = self.geometry()
@@ -1065,9 +1241,19 @@ class StickyTrayManager:
         self.hotkey_thread.toggle_all_signal.connect(self.toggle_all_notes)
         self.hotkey_thread.start()
 
-    def open_calendar_dialog(self):
-        dlg = CalendarDialog()
-        dlg.exec()
+    def open_calendar_dialog(self, target_date=None):
+        if not hasattr(self, "calendar_window") or self.calendar_window is None:
+            self.calendar_window = CalendarWindow()
+        if target_date:
+            self.calendar_window.select_date(target_date)
+        self.calendar_window.show()
+        self.calendar_window.raise_()
+        self.calendar_window.activateWindow()
+
+    def refresh_calendar(self):
+        if hasattr(self, "calendar_window") and self.calendar_window and self.calendar_window.isVisible():
+            self.calendar_window.highlight_calendar_dates()
+            self.calendar_window.on_date_selected()
 
     def create_note_at_cursor(self):
         """OS 전역 단축키(Alt+N) 입력 시 마우스 커서 위치에 새 메모 즉시 생성"""
@@ -1107,16 +1293,44 @@ class StickyTrayManager:
                 continue
 
             note_date = w.date_picker.date().toString("yyyy-MM-dd")
-            note_time = w.time_picker.time().toString("HH:mm")
+            if note_date != current_date:
+                continue
 
-            alarm_key = (w.note_id, current_date, current_time)
+            # 1. 헤더 기본 알람 시간 체크
+            header_time = w.time_picker.time().toString("HH:mm")
+            alarm_key_header = (w.note_id, current_date, header_time, "header")
+            if header_time == current_time and alarm_key_header not in self.triggered_alarms:
+                self.triggered_alarms.add(alarm_key_header)
+                content_preview = w.get_current_content().strip()
+                first_line = content_preview.split('\n')[0][:50] if content_preview else "일정 메모 알람입니다."
+                self.trigger_alarm(w, current_time, first_line)
 
-            if note_date == current_date and note_time == current_time:
-                if alarm_key not in self.triggered_alarms:
-                    self.triggered_alarms.add(alarm_key)
-                    self.trigger_alarm(w, current_time)
+            # 2. 개별 할 일 항목 시간 체크 (체크리스트 및 텍스트 모드 공통)
+            content = w.get_current_content()
+            lines = [l.strip() for l in content.split('\n') if l.strip()]
+            for line in lines:
+                m = re.match(r'^\[([ xX])\]\s*(?:\[(\d{1,2}:\d{2})\]\s*|(\d{1,2}:\d{2})\s+)?(.*)$', line)
+                if m:
+                    is_checked = (m.group(1).lower() == 'x')
+                    item_time = m.group(2) or m.group(3)
+                    item_txt = m.group(4)
+                    if not is_checked and item_time == current_time:
+                        item_alarm_key = (w.note_id, current_date, item_time, item_txt)
+                        if item_alarm_key not in self.triggered_alarms:
+                            self.triggered_alarms.add(item_alarm_key)
+                            self.trigger_alarm(w, current_time, f"[할 일] {item_txt}")
+                else:
+                    m2 = re.match(r'^(?:\[(\d{1,2}:\d{2})\]\s*|(\d{1,2}:\d{2})\s+)(.*)$', line)
+                    if m2:
+                        item_time = m2.group(1) or m2.group(2)
+                        item_txt = m2.group(3)
+                        if item_time == current_time:
+                            item_alarm_key = (w.note_id, current_date, item_time, item_txt)
+                            if item_alarm_key not in self.triggered_alarms:
+                                self.triggered_alarms.add(item_alarm_key)
+                                self.trigger_alarm(w, current_time, f"[일정] {item_txt}")
 
-    def trigger_alarm(self, window, time_str):
+    def trigger_alarm(self, window, time_str, message="일정 메모 알람입니다."):
         """알람 사운드 재생, 창 전면 표시, 시스템 토스트 알림"""
         # 1. 알람 사운드 재생
         if winsound:
@@ -1134,9 +1348,7 @@ class StickyTrayManager:
         window.activateWindow()
 
         # 3. 토스트 알림 발송
-        content_preview = window.get_current_content().strip()
-        first_line = content_preview.split('\n')[0][:50] if content_preview else "일정 메모 알람입니다."
-        self.notify(f"⏰ [일정 알람] {time_str}", first_line)
+        self.notify(f"⏰ [일정 알람] {time_str}", message)
 
     def on_tray_activated(self, reason):
         if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
