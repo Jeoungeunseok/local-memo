@@ -1024,33 +1024,33 @@ class StickyNoteWindow(QMainWindow):
                 background-color: transparent;
                 border: none;
             }}
-            QLineEdit {
+            QLineEdit {{
                 background-color: rgba(255, 255, 255, 0.4);
                 border: 1px solid rgba(0, 0, 0, 0.08);
                 border-radius: 4px;
                 padding: 4px 6px;
                 color: {theme['text']};
-            }
-            QLineEdit:focus {
+            }}
+            QLineEdit:focus {{
                 background-color: rgba(255, 255, 255, 0.85);
                 border-color: #3b82f6;
-            }
-            QTimeEdit {
+            }}
+            QTimeEdit {{
                 background-color: rgba(255, 255, 255, 0.7);
                 border: 1px solid rgba(0, 0, 0, 0.12);
                 border-radius: 4px;
                 padding: 1px 2px;
                 font-size: 11px;
                 color: {theme['text']};
-            }
-            QPushButton#clearCompletedBtn {
+            }}
+            QPushButton#clearCompletedBtn {{
                 background: rgba(0, 0, 0, 0.04);
                 border: 1px solid rgba(0, 0, 0, 0.08);
                 border-radius: 4px;
                 font-size: 11px;
                 color: #64748b;
                 padding: 3px 6px;
-            }
+            }}
             QPushButton#clearCompletedBtn:hover {{
                 background: rgba(239, 68, 68, 0.15);
                 color: #ef4444;
