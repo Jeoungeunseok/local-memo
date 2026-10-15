@@ -3,7 +3,7 @@ import os
 import sqlite3
 import random
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import ctypes
 from ctypes import wintypes
 
@@ -112,31 +112,54 @@ PASTEL_THEMES = {
     "purple": {"bg": "#F4ECF7", "header": "#E8DAEF", "border": "#D2B4DE", "text": "#333333"},
 }
 
-def create_tray_icon_pixmap():
-    """트레이용 귀여운 포스트잇 픽스맵 아이콘 생성"""
+def create_tray_icon_pixmap(is_alert=False):
+    """트레이용 귀여운 포스트잇 픽스맵 아이콘 생성 (알람 시 빨간색/금색 알람 버전 지원)"""
     pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-    # 포스트잇 본체 (노랑)
-    painter.setBrush(QBrush(QColor("#FDEBD0")))
-    painter.setPen(QPen(QColor("#FAD7A0"), 1.5))
-    painter.drawRoundedRect(3, 4, 26, 24, 4, 4)
+    if is_alert:
+        # 반짝이는 경고 배경 (강렬한 주황/빨강)
+        painter.setBrush(QBrush(QColor("#EF4444")))
+        painter.setPen(QPen(QColor("#DC2626"), 1.5))
+        painter.drawRoundedRect(2, 2, 28, 28, 6, 6)
 
-    # 핀(Pin) 포인트 (빨강)
-    painter.setBrush(QBrush(QColor("#EF4444")))
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.drawEllipse(13, 1, 6, 6)
+        # 밝은 황금색 벨 아이콘 모양 그리기
+        painter.setBrush(QBrush(QColor("#FDE047")))
+        painter.setPen(QPen(QColor("#CA8A04"), 1))
+        painter.drawEllipse(11, 7, 10, 10)
+        painter.drawChord(7, 12, 18, 12, 0, 180 * 16)
+        painter.setBrush(QBrush(QColor("#FFFFFF")))
+        painter.drawEllipse(14, 22, 4, 4)
+    else:
+        # 포스트잇 본체 (노랑)
+        painter.setBrush(QBrush(QColor("#FDEBD0")))
+        painter.setPen(QPen(QColor("#FAD7A0"), 1.5))
+        painter.drawRoundedRect(3, 4, 26, 24, 4, 4)
 
-    # 포스트잇 라인
-    painter.setPen(QPen(QColor("#D97706"), 1.5))
-    painter.drawLine(8, 12, 22, 12)
-    painter.drawLine(8, 17, 24, 17)
-    painter.drawLine(8, 22, 18, 22)
+        # 핀(Pin) 포인트 (빨강)
+        painter.setBrush(QBrush(QColor("#EF4444")))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(13, 1, 6, 6)
+
+        # 포스트잇 라인
+        painter.setPen(QPen(QColor("#D97706"), 1.5))
+        painter.drawLine(8, 12, 22, 12)
+        painter.drawLine(8, 17, 24, 17)
+        painter.drawLine(8, 22, 18, 22)
 
     painter.end()
     return pixmap
+
+def get_advance_time(date_str, time_str, minutes=10):
+    """지정 날짜 및 시간의 N분 전 날짜/시간(HH:mm) 계산 (자정 경계 자동 처리)"""
+    try:
+        dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+        adv = dt - timedelta(minutes=minutes)
+        return adv.strftime("%Y-%m-%d"), adv.strftime("%H:%M")
+    except Exception:
+        return None, None
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -1042,7 +1065,35 @@ class StickyNoteWindow(QMainWindow):
         for item in self.todo_items:
             item.set_text_color(theme['text'])
 
+    def flash_alert(self):
+        """알람 발생 시 상단 벨 아이콘을 빨간색 경고등으로 반짝여 시각적 피드백 제공"""
+        self.flash_step = 0
+        if not hasattr(self, "_flash_timer"):
+            self._flash_timer = QTimer(self)
+            self._flash_timer.timeout.connect(self._on_flash_tick)
+        self._flash_timer.start(350)
+
+    def _on_flash_tick(self):
+        self.flash_step += 1
+        if self.flash_step % 2 == 1:
+            self.alarm_btn.setText("🚨")
+            self.alarm_btn.setStyleSheet("background: #ef4444; color: white; border-radius: 4px; font-weight: bold; font-size: 13px;")
+        else:
+            self.alarm_btn.setText("🔔")
+            self.alarm_btn.setStyleSheet("background: #f59e0b; color: white; border-radius: 4px; font-weight: bold; font-size: 13px;")
+
+        if self.flash_step >= 12:  # 약 4초간 반짝인 후 복구
+            self._flash_timer.stop()
+            self.alarm_btn.setText("🔔" if self.is_alarm_enabled else "🔕")
+            self.apply_style()
+
     def mousePressEvent(self, event):
+        if hasattr(QApplication.instance(), "tray_manager"):
+            QApplication.instance().tray_manager.stop_tray_blink()
+        if hasattr(self, "_flash_timer") and self._flash_timer.isActive():
+            self._flash_timer.stop()
+            self.alarm_btn.setText("🔔" if self.is_alarm_enabled else "🔕")
+            self.apply_style()
         if event.button() == Qt.MouseButton.LeftButton:
             self.old_pos = event.globalPosition().toPoint()
 
@@ -1195,9 +1246,16 @@ class StickyTrayManager:
         self.triggered_alarms = set()
         
         # 트레이 아이콘 설정
-        icon = QIcon(create_tray_icon_pixmap())
-        self.tray_icon.setIcon(icon)
+        self.normal_icon = QIcon(create_tray_icon_pixmap(is_alert=False))
+        self.alert_icon = QIcon(create_tray_icon_pixmap(is_alert=True))
+        self.tray_icon.setIcon(self.normal_icon)
         self.tray_icon.setToolTip("스티커 메모 캘린더 (단축키: Alt+N 새 메모, Alt+M 전체 숨김/표시)")
+
+        # 트레이 아이콘 반짝임 타이머
+        self.is_blinking = False
+        self.blink_count = 0
+        self.blink_timer = QTimer()
+        self.blink_timer.timeout.connect(self._on_tray_blink_tick)
 
         # 트레이 컨텍스트 메뉴 생성
         self.menu = QMenu()
@@ -1282,8 +1340,31 @@ class StickyTrayManager:
         w.activateWindow()
         self.notify("새 메모 생성 (Alt+N)", "마우스 커서 위치에 새 포스트잇이 생성되었습니다.")
 
+    def start_tray_blink(self):
+        """알람 발생 시 작업 표시줄 트레이 아이콘을 반짝임"""
+        self.is_blinking = True
+        self.blink_count = 0
+        self.blink_timer.start(400)
+
+    def stop_tray_blink(self):
+        """트레이 아이콘 반짝임 정지 및 정상 복구"""
+        if self.is_blinking:
+            self.is_blinking = False
+            self.blink_timer.stop()
+            self.tray_icon.setIcon(self.normal_icon)
+
+    def _on_tray_blink_tick(self):
+        self.blink_count += 1
+        if self.blink_count % 2 == 1:
+            self.tray_icon.setIcon(self.alert_icon)
+        else:
+            self.tray_icon.setIcon(self.normal_icon)
+
+        if self.blink_count >= 30:  # 약 12초 후 자동 종료
+            self.stop_tray_blink()
+
     def check_alarms(self):
-        """설정된 날짜 및 시간에 알람 사운드 및 팝업 토스트 트리거"""
+        """설정된 날짜 및 시간에 알람 사운드 및 팝업 토스트 트리거 (10분 전 사전 알림 + 정시 알림)"""
         now = datetime.now()
         current_date = now.strftime("%Y-%m-%d")
         current_time = now.strftime("%H:%M")
@@ -1293,17 +1374,37 @@ class StickyTrayManager:
                 continue
 
             note_date = w.date_picker.date().toString("yyyy-MM-dd")
-            if note_date != current_date:
-                continue
 
             # 1. 헤더 기본 알람 시간 체크
             header_time = w.time_picker.time().toString("HH:mm")
-            alarm_key_header = (w.note_id, current_date, header_time, "header")
-            if header_time == current_time and alarm_key_header not in self.triggered_alarms:
-                self.triggered_alarms.add(alarm_key_header)
-                content_preview = w.get_current_content().strip()
-                first_line = content_preview.split('\n')[0][:50] if content_preview else "일정 메모 알람입니다."
-                self.trigger_alarm(w, current_time, first_line)
+            # 10분 전 사전 알림
+            adv_date_h, adv_time_h = get_advance_time(note_date, header_time, 10)
+            alarm_key_h_adv = (w.note_id, adv_date_h, header_time, "header", "adv10")
+            if current_date == adv_date_h and current_time == adv_time_h:
+                if alarm_key_h_adv not in self.triggered_alarms:
+                    self.triggered_alarms.add(alarm_key_h_adv)
+                    content_preview = w.get_current_content().strip()
+                    first_line = content_preview.split('\n')[0][:40] if content_preview else "일정 메모"
+                    self.trigger_alarm(
+                        w,
+                        f"{header_time} (10분 전)",
+                        f"⏳ [10분 전 사전 알림] {header_time} '{first_line}' 10분 전입니다!",
+                        is_advance=True
+                    )
+
+            # 정시 알림
+            alarm_key_h_ontime = (w.note_id, note_date, header_time, "header", "ontime")
+            if current_date == note_date and current_time == header_time:
+                if alarm_key_h_ontime not in self.triggered_alarms:
+                    self.triggered_alarms.add(alarm_key_h_ontime)
+                    content_preview = w.get_current_content().strip()
+                    first_line = content_preview.split('\n')[0][:40] if content_preview else "일정 메모"
+                    self.trigger_alarm(
+                        w,
+                        header_time,
+                        f"🔔 [지금 시작!] {header_time} '{first_line}' 시간입니다!",
+                        is_advance=False
+                    )
 
             # 2. 개별 할 일 항목 시간 체크 (체크리스트 및 텍스트 모드 공통)
             content = w.get_current_content()
@@ -1314,29 +1415,54 @@ class StickyTrayManager:
                     is_checked = (m.group(1).lower() == 'x')
                     item_time = m.group(2) or m.group(3)
                     item_txt = m.group(4)
-                    if not is_checked and item_time == current_time:
-                        item_alarm_key = (w.note_id, current_date, item_time, item_txt)
-                        if item_alarm_key not in self.triggered_alarms:
-                            self.triggered_alarms.add(item_alarm_key)
-                            self.trigger_alarm(w, current_time, f"[할 일] {item_txt}")
+                    if is_checked or not item_time:
+                        continue
                 else:
                     m2 = re.match(r'^(?:\[(\d{1,2}:\d{2})\]\s*|(\d{1,2}:\d{2})\s+)(.*)$', line)
                     if m2:
                         item_time = m2.group(1) or m2.group(2)
                         item_txt = m2.group(3)
-                        if item_time == current_time:
-                            item_alarm_key = (w.note_id, current_date, item_time, item_txt)
-                            if item_alarm_key not in self.triggered_alarms:
-                                self.triggered_alarms.add(item_alarm_key)
-                                self.trigger_alarm(w, current_time, f"[일정] {item_txt}")
+                    else:
+                        continue
 
-    def trigger_alarm(self, window, time_str, message="일정 메모 알람입니다."):
-        """알람 사운드 재생, 창 전면 표시, 시스템 토스트 알림"""
+                # 10분 전 사전 알림
+                adv_d, adv_t = get_advance_time(note_date, item_time, 10)
+                item_key_adv = (w.note_id, adv_d, item_time, item_txt, "adv10")
+                if current_date == adv_d and current_time == adv_t:
+                    if item_key_adv not in self.triggered_alarms:
+                        self.triggered_alarms.add(item_key_adv)
+                        self.trigger_alarm(
+                            w,
+                            f"{item_time} (10분 전)",
+                            f"⏳ [10분 전 사전 알림] {item_time} '{item_txt}' 10분 전입니다!",
+                            is_advance=True
+                        )
+
+                # 정시 알림
+                item_key_ontime = (w.note_id, note_date, item_time, item_txt, "ontime")
+                if current_date == note_date and current_time == item_time:
+                    if item_key_ontime not in self.triggered_alarms:
+                        self.triggered_alarms.add(item_key_ontime)
+                        self.trigger_alarm(
+                            w,
+                            item_time,
+                            f"🔔 [지금 시작!] {item_time} '{item_txt}' 시간입니다!",
+                            is_advance=False
+                        )
+
+    def trigger_alarm(self, window, time_str, message="일정 메모 알람입니다.", is_advance=False):
+        """알람 사운드 재생, 창 전면 표시, 트레이/메모 아이콘 반짝임, 시스템 토스트 알림"""
         # 1. 알람 사운드 재생
         if winsound:
             try:
-                winsound.Beep(988, 200)   # B5
-                winsound.Beep(1319, 400)  # E6
+                if is_advance:
+                    # 10분 전 사전 알림: 맑고 부드러운 사전 차임벨 (도 - 솔)
+                    winsound.Beep(523, 200)   # C5
+                    winsound.Beep(784, 350)   # G5
+                else:
+                    # 정시 알림: 주목도 높은 알람 비프 (시 - 높은미)
+                    winsound.Beep(988, 200)   # B5
+                    winsound.Beep(1319, 450)  # E6
             except Exception:
                 QApplication.beep()
         else:
@@ -1347,10 +1473,18 @@ class StickyTrayManager:
         window.raise_()
         window.activateWindow()
 
-        # 3. 토스트 알림 발송
+        # 3. 창 내부 벨 아이콘 반짝임 & 윈도우 작업 표시줄 알림
+        window.flash_alert()
+        QApplication.alert(window, 5000)
+
+        # 4. 시스템 트레이 아이콘 반짝임 시작
+        self.start_tray_blink()
+
+        # 5. 토스트 알림 발송
         self.notify(f"⏰ [일정 알람] {time_str}", message)
 
     def on_tray_activated(self, reason):
+        self.stop_tray_blink()
         if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
             self.toggle_all_notes()
 
