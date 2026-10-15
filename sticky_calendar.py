@@ -97,6 +97,11 @@ try:
 except ImportError:
     winsound = None
 
+try:
+    import winreg
+except ImportError:
+    winreg = None
+
 # DB 경로 설정 (exe 패키징 및 로컬 실행 간 데이터 완벽 보존 및 동기화)
 def get_db_path():
     app_data_dir = os.path.join(os.getenv("APPDATA", os.path.expanduser("~")), "StickyCalendar")
@@ -120,13 +125,67 @@ def get_db_path():
 
 DB_PATH = get_db_path()
 
-# 파스텔 톤 테마 정의 (배경색, 헤더색, 테두리색, 텍스트색)
+# Windows 부팅 시 자동 시작(Auto-start) 레지스트리 관리
+def get_app_command():
+    """현재 실행 중인 실행 파일 또는 스크립트 실행 명령어 반환"""
+    if getattr(sys, 'frozen', False):
+        return f'"{os.path.abspath(sys.executable)}"'
+    else:
+        python_exe = os.path.abspath(sys.executable)
+        script = os.path.abspath(__file__)
+        return f'"{python_exe}" "{script}"'
+
+def is_autostart_enabled() -> bool:
+    """윈도우 부팅 시 자동 실행 등록 여부 확인"""
+    if sys.platform != "win32" or not winreg:
+        return False
+    try:
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+            0,
+            winreg.KEY_READ
+        )
+        val, _ = winreg.QueryValueEx(key, "StickyCalendar")
+        winreg.CloseKey(key)
+        return bool(val)
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return False
+
+def set_autostart(enable: bool) -> bool:
+    """윈도우 부팅 시 자동 실행 등록 또는 해제 (경로 변경 시 자동 갱신)"""
+    if sys.platform != "win32" or not winreg:
+        return False
+    try:
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+            0,
+            winreg.KEY_SET_VALUE
+        )
+        if enable:
+            cmd = get_app_command()
+            winreg.SetValueEx(key, "StickyCalendar", 0, winreg.REG_SZ, cmd)
+        else:
+            try:
+                winreg.DeleteValue(key, "StickyCalendar")
+            except FileNotFoundError:
+                pass
+        winreg.CloseKey(key)
+        return True
+    except Exception as e:
+        print(f"Autostart configuration error: {e}")
+        return False
+
+# 파스텔 톤 테마 정의 (배경색, 헤더색, 테두리색, 악센트색, 텍스트색) - 노션/애플 감성 모던 팔레트
 PASTEL_THEMES = {
-    "yellow": {"bg": "#FEF9E7", "header": "#FDEBD0", "border": "#FAD7A0", "text": "#333333"},
-    "blue": {"bg": "#EBF5FB", "header": "#D4E6F1", "border": "#A9CCE3", "text": "#333333"},
-    "green": {"bg": "#EAFAF1", "header": "#D5F5E3", "border": "#A9DFBF", "text": "#333333"},
-    "orange": {"bg": "#FBEEE6", "header": "#F6DDCC", "border": "#EDBB99", "text": "#333333"},
-    "purple": {"bg": "#F4ECF7", "header": "#E8DAEF", "border": "#D2B4DE", "text": "#333333"},
+    "yellow": {"bg": "#FFFDF0", "header": "#FEF3C7", "border": "#FDE68A", "accent": "#D97706", "text": "#1F2937"},
+    "blue": {"bg": "#F0F9FF", "header": "#E0F2FE", "border": "#BAE6FD", "accent": "#0284C7", "text": "#1F2937"},
+    "green": {"bg": "#F0FDF4", "header": "#DCFCE7", "border": "#BBF7D0", "accent": "#16A34A", "text": "#1F2937"},
+    "orange": {"bg": "#FFF7ED", "header": "#FFEDD5", "border": "#FED7AA", "accent": "#EA580C", "text": "#1F2937"},
+    "purple": {"bg": "#FAF5FF", "header": "#F3E8FF", "border": "#E9D5FF", "accent": "#9333EA", "text": "#1F2937"},
 }
 
 def create_tray_icon_pixmap(is_alert=False):
@@ -268,7 +327,7 @@ class TodoItemWidget(QWidget):
 
         # 2. 개별 시간 토글 버튼 (⏰)
         self.time_btn = QPushButton("⏰")
-        self.time_btn.setFixedSize(22, 22)
+        self.time_btn.setFixedSize(24, 24)
         self.time_btn.setToolTip("이 할 일의 개별 알람 시간 지정 / 해제 (클릭)")
         self.time_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.time_btn.clicked.connect(self.toggle_time)
@@ -277,7 +336,8 @@ class TodoItemWidget(QWidget):
         # 3. 개별 시간 편집기 (QTimeEdit)
         self.time_edit = QTimeEdit()
         self.time_edit.setDisplayFormat("HH:mm")
-        self.time_edit.setFixedSize(56, 22)
+        self.time_edit.setFixedSize(64, 24)
+        self.time_edit.setStyleSheet("QTimeEdit { background: rgba(255, 255, 255, 0.85); border: 1px solid rgba(0, 0, 0, 0.12); border-radius: 4px; padding: 1px 3px; font-size: 11px; font-weight: 600; color: #1E293B; }")
         self.time_edit.setToolTip("할 일 시작 및 알람 시간")
         if time_str:
             t = QTime.fromString(time_str, "HH:mm")
@@ -306,17 +366,16 @@ class TodoItemWidget(QWidget):
         self.del_btn.setToolTip("이 할 일 삭제")
         self.del_btn.setStyleSheet("""
             QPushButton {
-                background: rgba(0, 0, 0, 0.04);
-                border: 1px solid rgba(0, 0, 0, 0.08);
+                background: transparent;
+                border: none;
                 border-radius: 4px;
-                color: #64748b;
-                font-size: 11px;
+                color: #94A3B8;
+                font-size: 12px;
                 font-weight: bold;
             }
             QPushButton:hover {
-                background: #ef4444;
-                color: white;
-                border-color: #dc2626;
+                background: #FEE2E2;
+                color: #EF4444;
             }
         """)
         self.del_btn.clicked.connect(lambda: self.delete_signal.emit(self))
@@ -335,25 +394,25 @@ class TodoItemWidget(QWidget):
         if self.has_time:
             self.time_btn.setStyleSheet("""
                 QPushButton {
-                    background: #3b82f6;
+                    background: #6366F1;
                     color: white;
-                    border: 1px solid #2563eb;
-                    border-radius: 4px;
-                    font-size: 11px;
+                    border: none;
+                    border-radius: 6px;
+                    font-size: 12px;
                 }
             """)
         else:
             self.time_btn.setStyleSheet("""
                 QPushButton {
                     background: rgba(0, 0, 0, 0.04);
-                    color: #94a3b8;
-                    border: 1px solid rgba(0, 0, 0, 0.08);
-                    border-radius: 4px;
-                    font-size: 11px;
+                    color: #94A3B8;
+                    border: 1px solid rgba(0, 0, 0, 0.06);
+                    border-radius: 6px;
+                    font-size: 12px;
                 }
                 QPushButton:hover {
-                    background: rgba(59, 130, 246, 0.15);
-                    color: #3b82f6;
+                    background: rgba(99, 102, 241, 0.15);
+                    color: #4F46E5;
                 }
             """)
 
@@ -422,35 +481,38 @@ class TodoItemWidget(QWidget):
 
 
 class CalendarWindow(QMainWindow):
-    """월간 달력 뷰 및 날짜별 메모 모아보기 (비모달 독립 윈도우)"""
+    """월간 달력 뷰 및 날짜별 메모 모아보기 (비모달 독립 윈도우 - 모던 노션/애플 캘린더 감성)"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("📅 캘린더 뷰 - 월간 일정 및 메모")
-        self.resize(540, 600)
-        self.setMinimumSize(480, 520)
+        self.resize(560, 640)
+        self.setMinimumSize(500, 560)
+        self._highlighted_dates = set()
 
         container = QWidget(self)
+        container.setObjectName("calContainer")
         self.setCentralWidget(container)
 
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
 
         # 상단 타이틀 바
         title_layout = QHBoxLayout()
-        title_label = QLabel("📅 월간 캘린더 & 일정 모아보기")
-        title_label.setFont(QFont("Malgun Gothic", 12, QFont.Weight.Bold))
+        title_label = QLabel("📅  월간 캘린더 & 일정 모아보기")
+        title_label.setFont(QFont("Malgun Gothic", 13, QFont.Weight.Bold))
         title_layout.addWidget(title_label)
         title_layout.addStretch()
 
         close_btn = QPushButton("✕")
-        close_btn.setFixedSize(26, 26)
+        close_btn.setObjectName("closeHeaderBtn")
+        close_btn.setFixedSize(28, 28)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.clicked.connect(self.close)
         title_layout.addWidget(close_btn)
         layout.addLayout(title_layout)
 
-        # QCalendarWidget
+        # QCalendarWidget (모던 스타일 적용)
         self.calendar = QCalendarWidget()
         self.calendar.setGridVisible(True)
         self.calendar.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
@@ -465,40 +527,19 @@ class CalendarWindow(QMainWindow):
         # 메모 리스트
         self.notes_list = QListWidget()
         self.notes_list.itemDoubleClicked.connect(self.on_item_double_clicked)
-        self.notes_list.setStyleSheet("""
-            QListWidget {
-                background: rgba(255, 255, 255, 0.95);
-                border: 1px solid #cbd5e1;
-                border-radius: 8px;
-                padding: 6px;
-                font-size: 13px;
-            }
-            QListWidget::item {
-                padding: 5px 8px;
-                border-bottom: 1px solid #f1f5f9;
-                border-radius: 4px;
-            }
-            QListWidget::item:hover {
-                background: #e2e8f0;
-            }
-            QListWidget::item:selected {
-                background: #3b82f6;
-                color: white;
-            }
-        """)
         layout.addWidget(self.notes_list)
 
         # 하단 액션 버튼
         btn_layout = QHBoxLayout()
-        self.new_note_btn = QPushButton("➕ 선택한 날짜에 새 메모 만들기")
+        self.new_note_btn = QPushButton("➕  선택한 날짜에 새 메모 만들기")
+        self.new_note_btn.setObjectName("primaryBtn")
         self.new_note_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.new_note_btn.setStyleSheet("padding: 7px 14px; font-weight: bold; background: #3b82f6; color: white; border-radius: 6px;")
         self.new_note_btn.clicked.connect(self.create_note_for_selected_date)
         btn_layout.addWidget(self.new_note_btn)
 
         close_bottom_btn = QPushButton("닫기")
+        close_bottom_btn.setObjectName("secondaryBtn")
         close_bottom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_bottom_btn.setStyleSheet("padding: 7px 14px; border-radius: 6px;")
         close_bottom_btn.clicked.connect(self.close)
         btn_layout.addWidget(close_bottom_btn)
         layout.addLayout(btn_layout)
@@ -517,35 +558,151 @@ class CalendarWindow(QMainWindow):
         self.setStyleSheet("""
             QMainWindow {
                 background-color: #F8FAFC;
+            }
+            QWidget#calContainer {
+                background-color: #F8FAFC;
+            }
+            QLabel {
                 color: #1E293B;
+                font-family: 'Malgun Gothic', 'Pretendard', sans-serif;
             }
-            QWidget {
-                color: #1E293B;
-            }
-            QCalendarWidget QWidget {
-                alternate-background-color: #F1F5F9;
-            }
-            QCalendarWidget QAbstractItemView:enabled {
-                font-size: 13px;
-                color: #1E293B;
-                selection-background-color: #3B82F6;
-                selection-color: white;
-            }
-            QPushButton {
+            /* QCalendarWidget Modern Design */
+            QCalendarWidget {
                 background-color: #FFFFFF;
-                border: 1px solid #CBD5E1;
+                border: 1px solid #E2E8F0;
+                border-radius: 12px;
+            }
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background-color: #FFFFFF;
+                border-top-left-radius: 12px;
+                border-top-right-radius: 12px;
+                border-bottom: 1px solid #E2E8F0;
+                min-height: 48px;
+            }
+            QCalendarWidget QToolButton {
+                color: #0F172A;
+                font-family: 'Malgun Gothic', 'Pretendard', sans-serif;
+                font-size: 13px;
+                font-weight: 700;
+                background-color: transparent;
+                border: none;
                 border-radius: 6px;
                 padding: 6px 12px;
-                color: #1E293B;
-                font-size: 12px;
+                margin: 2px 4px;
             }
-            QPushButton:hover {
+            QCalendarWidget QToolButton:hover {
                 background-color: #F1F5F9;
+                color: #4F46E5;
+            }
+            QCalendarWidget QToolButton#qt_calendar_prevmonth {
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QCalendarWidget QToolButton#qt_calendar_nextmonth {
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QCalendarWidget QTableView {
+                background-color: #FFFFFF;
+                selection-background-color: #4F46E5;
+                selection-color: #FFFFFF;
+                gridline-color: #F8FAFC;
+                border: none;
+                font-size: 13px;
+                outline: 0;
+            }
+            QCalendarWidget QTableView::item {
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QCalendarWidget QTableView::item:hover {
+                background-color: #EEF2FF;
+            }
+            QCalendarWidget QTableView::item:selected {
+                background-color: #4F46E5;
+                color: #FFFFFF;
+                font-weight: bold;
+            }
+            QCalendarWidget QHeaderView::section {
+                background-color: #F8FAFC;
+                color: #64748B;
+                font-weight: 600;
+                font-size: 12px;
+                padding: 6px 0;
+                border: none;
+                border-bottom: 1px solid #E2E8F0;
+            }
+            /* QListWidget Modern Cards */
+            QListWidget {
+                background: #FFFFFF;
+                border: 1px solid #E2E8F0;
+                border-radius: 12px;
+                padding: 8px;
+                font-size: 13px;
+                color: #1E293B;
+            }
+            QListWidget::item {
+                padding: 8px 12px;
+                margin-bottom: 4px;
+                border-radius: 8px;
+                border-bottom: 1px solid #F8FAFC;
+            }
+            QListWidget::item:hover {
+                background: #F8FAFC;
+            }
+            QListWidget::item:selected {
+                background: #EEF2FF;
+                color: #312E81;
+                border: 1px solid #C7D2FE;
+            }
+            /* Buttons */
+            QPushButton#primaryBtn {
+                background-color: #4F46E5;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+                padding: 10px 20px;
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QPushButton#primaryBtn:hover {
+                background-color: #4338CA;
+            }
+            QPushButton#secondaryBtn {
+                background-color: #FFFFFF;
+                color: #475569;
+                border: 1px solid #CBD5E1;
+                border-radius: 8px;
+                padding: 10px 18px;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            QPushButton#secondaryBtn:hover {
+                background-color: #F1F5F9;
+                color: #0F172A;
+            }
+            QPushButton#closeHeaderBtn {
+                background-color: transparent;
+                color: #94A3B8;
+                border: none;
+                border-radius: 6px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton#closeHeaderBtn:hover {
+                background-color: #FEE2E2;
+                color: #EF4444;
             }
         """)
 
     def highlight_calendar_dates(self):
-        """메모가 있는 날짜들을 캘린더에 굵은 글씨 및 배경색으로 하이라이트"""
+        """메모가 있는 날짜들을 캘린더에 세련된 보라/인디고 배지로 하이라이트 (이전 포맷 초기화로 파란색 잔상 버그 완벽 방지)"""
+        empty_fmt = QTextCharFormat()
+        if hasattr(self, "_highlighted_dates"):
+            for old_qdate in self._highlighted_dates:
+                self.calendar.setDateTextFormat(old_qdate, empty_fmt)
+        self._highlighted_dates = set()
+
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("SELECT DISTINCT target_date FROM sticky_notes WHERE target_date IS NOT NULL AND target_date != ''")
@@ -554,13 +711,14 @@ class CalendarWindow(QMainWindow):
 
         fmt = QTextCharFormat()
         fmt.setFontWeight(QFont.Weight.Bold)
-        fmt.setForeground(QColor("#2563EB"))
-        fmt.setBackground(QColor("#DBEAFE"))
+        fmt.setForeground(QColor("#4F46E5"))
+        fmt.setBackground(QColor("#EEF2FF"))
 
         for (target_date_str,) in rows:
             qdate = QDate.fromString(target_date_str, "yyyy-MM-dd")
             if qdate.isValid():
                 self.calendar.setDateTextFormat(qdate, fmt)
+                self._highlighted_dates.add(qdate)
 
     def on_date_selected(self):
         sel_date = self.calendar.selectedDate().toString("yyyy-MM-dd")
@@ -576,32 +734,43 @@ class CalendarWindow(QMainWindow):
         conn.close()
 
         if not rows:
-            self.summary_label.setText(f"📌 {sel_date} 등록된 메모 없음")
-            item = QListWidgetItem("등록된 메모나 할 일이 없습니다. 아래 버튼으로 추가해보세요!")
+            self.summary_label.setText(f"📅  {sel_date} 일정 & 할 일 (0개)")
+            item = QListWidgetItem("등록된 메모나 할 일이 없습니다. 아래 버튼으로 새 메모를 만들어보세요!")
             item.setFlags(Qt.ItemFlag.NoItemFlags)
+            item.setForeground(QColor("#94A3B8"))
             self.notes_list.addItem(item)
             return
 
         total_items_count = 0
+        theme_names = {
+            "yellow": "🟡 노랑",
+            "blue": "🔵 파랑",
+            "green": "🟢 초록",
+            "orange": "🟠 주황",
+            "purple": "🟣 보라",
+        }
+
         for row in rows:
             note_id, content, color, target_time, is_pinned, is_alarm = row
             lines = [l.strip() for l in content.split('\n') if l.strip()]
 
             pin_str = "📌 " if is_pinned else ""
             alarm_str = "🔔 " if is_alarm else ""
-            time_str = f"[{target_time}] " if target_time else ""
-            color_name = color.capitalize() if color else "메모"
+            time_str = f"⏰ {target_time}  " if target_time else ""
+            c_label = theme_names.get(color, f"📝 {color.capitalize()}")
 
-            # 메모 헤더 아이템
-            header_item = QListWidgetItem(f"{pin_str}{alarm_str}📝 {color_name} 메모 {time_str}")
+            # 메모 헤더 카드 아이템
+            header_item = QListWidgetItem(f"{c_label} 메모  {time_str}{pin_str}{alarm_str}")
             header_item.setFont(QFont("Malgun Gothic", 10, QFont.Weight.Bold))
             header_item.setData(Qt.ItemDataRole.UserRole, note_id)
-            header_item.setBackground(QColor("#e2e8f0"))
+            header_item.setBackground(QColor("#F1F5F9"))
+            header_item.setForeground(QColor("#0F172A"))
             self.notes_list.addItem(header_item)
 
             if not lines:
-                sub_item = QListWidgetItem("   (빈 메모)")
+                sub_item = QListWidgetItem("      (내용 없음 - 더블클릭하여 열기)")
                 sub_item.setData(Qt.ItemDataRole.UserRole, note_id)
+                sub_item.setForeground(QColor("#94A3B8"))
                 self.notes_list.addItem(sub_item)
                 total_items_count += 1
             else:
@@ -615,21 +784,24 @@ class CalendarWindow(QMainWindow):
 
                         status_str = "☑️" if is_checked else "⬜"
                         t_str = f"[{item_time}] " if item_time else ""
-                        check_label = f"   {status_str} {t_str}{item_txt}"
+                        check_label = f"     {status_str}  {t_str}{item_txt}"
                         if is_checked:
-                            check_label += " (완료)"
+                            check_label += "  ✓ 완료"
 
                         sub_item = QListWidgetItem(check_label)
                         sub_item.setData(Qt.ItemDataRole.UserRole, note_id)
                         if is_checked:
-                            sub_item.setForeground(QColor("#94a3b8"))
+                            sub_item.setForeground(QColor("#94A3B8"))
+                        else:
+                            sub_item.setForeground(QColor("#1E293B"))
                         self.notes_list.addItem(sub_item)
                     else:
-                        sub_item = QListWidgetItem(f"   • {line}")
+                        sub_item = QListWidgetItem(f"     •  {line}")
                         sub_item.setData(Qt.ItemDataRole.UserRole, note_id)
+                        sub_item.setForeground(QColor("#334155"))
                         self.notes_list.addItem(sub_item)
 
-        self.summary_label.setText(f"📌 {sel_date} 일정 & 할 일 ({len(rows)}개 메모, 총 {total_items_count}개 항목): (더블클릭 시 열기)")
+        self.summary_label.setText(f"📅  {sel_date} 일정 & 할 일 ({len(rows)}개 메모, 총 {total_items_count}개 항목)  •  더블클릭 시 열기")
 
     def on_item_double_clicked(self, item):
         note_id = item.data(Qt.ItemDataRole.UserRole)
@@ -672,12 +844,13 @@ class CalendarWindow(QMainWindow):
                 is_alarm_enabled=row[6] or 0,
                 x=row[7],
                 y=row[8],
-                w=max(400, row[9]),
-                h=max(260, row[10]),
+                w=max(460, row[9]),
+                h=max(300, row[10]),
             )
             active_windows.append(w)
             w.show()
             w.raise_()
+            w.activateWindow()
             w.activateWindow()
 
     def create_note_for_selected_date(self):
@@ -689,7 +862,7 @@ class CalendarWindow(QMainWindow):
 
 
 class StickyNoteWindow(QMainWindow):
-    def __init__(self, note_id=None, target_date=None, target_time="", content="", color="yellow", is_pinned=0, is_alarm_enabled=0, x=150, y=150, w=390, h=300):
+    def __init__(self, note_id=None, target_date=None, target_time="", content="", color="yellow", is_pinned=0, is_alarm_enabled=0, x=150, y=150, w=480, h=330):
         super().__init__()
         self.note_id = note_id
         self.current_color = color if color in PASTEL_THEMES else "yellow"
@@ -704,9 +877,9 @@ class StickyNoteWindow(QMainWindow):
         # 프레임리스 창 및 윈도우 기본 속성
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setMinimumWidth(380)
-        self.setMinimumHeight(240)
-        self.setGeometry(x, y, max(390, w), max(260, h))
+        self.setMinimumWidth(460)
+        self.setMinimumHeight(260)
+        self.setGeometry(x, y, max(460, w), max(300, h))
 
         if self.is_pinned:
             self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
@@ -715,18 +888,20 @@ class StickyNoteWindow(QMainWindow):
         self.container = QWidget(self)
         self.setCentralWidget(self.container)
         main_layout = QVBoxLayout(self.container)
-        main_layout.setContentsMargins(8, 8, 8, 8)
-        main_layout.setSpacing(4)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(6)
 
-        # 상단 타이틀 바 레이아웃
+        # 상단 타이틀 바 레이아웃 (충분한 호흡과 여백 확보)
         header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(2, 2, 2, 2)
-        header_layout.setSpacing(2)
+        header_layout.setContentsMargins(4, 2, 4, 4)
+        header_layout.setSpacing(4)
 
-        # 1. 날짜 선택기
+        # 1. 날짜 선택기 (잘림 방지 최적화 너비)
         self.date_picker = QDateEdit()
         self.date_picker.setCalendarPopup(True)
         self.date_picker.setDisplayFormat("yyyy-MM-dd")
+        self.date_picker.setMinimumWidth(125)
+        self.date_picker.setFixedHeight(28)
         if target_date:
             self.date_picker.setDate(QDate.fromString(target_date, "yyyy-MM-dd"))
         else:
@@ -737,6 +912,8 @@ class StickyNoteWindow(QMainWindow):
         # 2. 시간 선택기 (알람 시간)
         self.time_picker = QTimeEdit()
         self.time_picker.setDisplayFormat("HH:mm")
+        self.time_picker.setMinimumWidth(72)
+        self.time_picker.setFixedHeight(28)
         if target_time:
             self.time_picker.setTime(QTime.fromString(target_time, "HH:mm"))
         else:
@@ -744,38 +921,46 @@ class StickyNoteWindow(QMainWindow):
         self.time_picker.timeChanged.connect(self.auto_save)
         header_layout.addWidget(self.time_picker)
 
+        header_layout.addSpacing(6)
+        header_layout.addStretch()
+
         # 3. 캘린더 뷰 팝업 버튼 (📅)
         self.cal_btn = QPushButton("📅")
-        self.cal_btn.setFixedSize(24, 24)
+        self.cal_btn.setFixedSize(26, 26)
         self.cal_btn.setToolTip("월간 캘린더 & 일정 모아보기")
+        self.cal_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cal_btn.clicked.connect(self.open_calendar_view)
         header_layout.addWidget(self.cal_btn)
 
         # 4. 알람 켜기/끄기 토글 버튼 (🔔 / 🔕)
         self.alarm_btn = QPushButton("🔔" if self.is_alarm_enabled else "🔕")
-        self.alarm_btn.setFixedSize(24, 24)
+        self.alarm_btn.setFixedSize(26, 26)
         self.alarm_btn.setToolTip("알람 켜기/끄기 (지정 시간에 소리 및 토스트 알림)")
+        self.alarm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.alarm_btn.clicked.connect(self.toggle_alarm)
         header_layout.addWidget(self.alarm_btn)
 
         # 5. 모드 전환 버튼 (체크리스트 ☑️ / 일반 텍스트 📝)
         self.mode_btn = QPushButton("📝" if self.is_todo_mode else "☑️")
-        self.mode_btn.setFixedSize(24, 24)
+        self.mode_btn.setFixedSize(26, 26)
         self.mode_btn.setToolTip("체크리스트/텍스트 모드 전환 (Ctrl+T)")
+        self.mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.mode_btn.clicked.connect(self.toggle_mode)
         header_layout.addWidget(self.mode_btn)
 
         # 6. 항상 위 핀 버튼
         self.pin_btn = QPushButton("📌" if self.is_pinned else "📍")
-        self.pin_btn.setFixedSize(24, 24)
+        self.pin_btn.setFixedSize(26, 26)
         self.pin_btn.setToolTip("항상 위에 고정 (Ctrl+P)")
+        self.pin_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.pin_btn.clicked.connect(self.toggle_pin)
         header_layout.addWidget(self.pin_btn)
 
         # 7. 색상 변경 메뉴 버튼
         self.color_btn = QToolButton()
         self.color_btn.setText("🎨")
-        self.color_btn.setFixedSize(24, 24)
+        self.color_btn.setFixedSize(26, 26)
+        self.color_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.color_menu = QMenu(self)
         for theme_name in PASTEL_THEMES.keys():
             action = QAction(theme_name.capitalize(), self)
@@ -787,29 +972,35 @@ class StickyNoteWindow(QMainWindow):
 
         # 8. 새 메모 추가 버튼
         new_btn = QPushButton("➕")
-        new_btn.setFixedSize(24, 24)
+        new_btn.setFixedSize(26, 26)
         new_btn.setToolTip("새 일정 메모 (Ctrl+N)")
+        new_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         new_btn.clicked.connect(self.create_new_window)
         header_layout.addWidget(new_btn)
 
         # 9. 트레이로 숨기기 (최소화) 버튼
         hide_btn = QPushButton("➖")
-        hide_btn.setFixedSize(24, 24)
+        hide_btn.setFixedSize(26, 26)
         hide_btn.setToolTip("트레이로 최소화 (Ctrl+H)")
+        hide_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         hide_btn.clicked.connect(self.hide_to_tray)
         header_layout.addWidget(hide_btn)
 
         # 10. 메모 완전 삭제 버튼 (🗑️)
         del_btn = QPushButton("🗑️")
-        del_btn.setFixedSize(24, 24)
+        del_btn.setObjectName("delBtn")
+        del_btn.setFixedSize(26, 26)
         del_btn.setToolTip("메모 완전 삭제 (캘린더에서도 완전히 삭제, Ctrl+D)")
+        del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         del_btn.clicked.connect(self.confirm_delete_note)
         header_layout.addWidget(del_btn)
 
         # 11. 창 닫기 버튼 (✕ - 닫아도 캘린더와 DB에 안전하게 보존됨)
         close_btn = QPushButton("✕")
-        close_btn.setFixedSize(24, 24)
+        close_btn.setObjectName("closeBtn")
+        close_btn.setFixedSize(26, 26)
         close_btn.setToolTip("창 닫기 (캘린더와 DB에 안전하게 영구 보존됨, Esc)")
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.clicked.connect(self.close_note)
         header_layout.addWidget(close_btn)
 
@@ -847,6 +1038,8 @@ class StickyNoteWindow(QMainWindow):
         self.todo_toolbar_layout.setSpacing(4)
 
         self.add_todo_input = QLineEdit()
+        self.add_todo_input.setObjectName("addTodoInput")
+        self.add_todo_input.setFixedHeight(34)
         self.add_todo_input.setPlaceholderText("+ 새 할 일 추가 (입력 후 Enter)...")
         self.add_todo_input.setFont(QFont("Malgun Gothic", 10))
         self.add_todo_input.returnPressed.connect(self.on_add_input_enter)
@@ -1051,76 +1244,102 @@ class StickyNoteWindow(QMainWindow):
 
     def apply_style(self):
         theme = PASTEL_THEMES[self.current_color]
-        alarm_style = "background-color: #FDE68A; border: 1.5px solid #F59E0B;" if self.is_alarm_enabled else ""
+        alarm_style = "background-color: #FEF3C7; border: 1.5px solid #F59E0B; border-radius: 6px;" if self.is_alarm_enabled else ""
         style = f"""
             QWidget#centralWidget {{
                 background-color: {theme['bg']};
-                border: 1px solid {theme['border']};
-                border-radius: 8px;
+                border: 1.5px solid {theme['border']};
+                border-radius: 14px;
             }}
             QDateEdit, QTimeEdit {{
-                background-color: {theme['header']};
+                background-color: rgba(255, 255, 255, 0.75);
                 border: 1px solid {theme['border']};
-                border-radius: 4px;
-                padding: 2px 4px;
-                font-weight: bold;
-                font-size: 11px;
+                border-radius: 6px;
+                padding: 2px 6px;
+                font-weight: 600;
+                font-size: 12px;
                 color: {theme['text']};
             }}
+            QDateEdit:hover, QTimeEdit:hover {{
+                background-color: rgba(255, 255, 255, 0.95);
+                border-color: {theme['accent']};
+            }}
+            QDateEdit:focus, QTimeEdit:focus {{
+                background-color: #FFFFFF;
+                border: 1.5px solid {theme['accent']};
+            }}
+            QDateEdit::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 18px;
+                border-left: none;
+            }}
             QPushButton, QToolButton {{
-                background-color: {theme['header']};
-                border: 1px solid {theme['border']};
-                border-radius: 4px;
-                font-size: 11px;
+                background-color: transparent;
+                border: none;
+                border-radius: 6px;
+                font-size: 13px;
                 color: {theme['text']};
+                padding: 2px;
+            }}
+            QPushButton:hover, QToolButton:hover {{
+                background-color: rgba(0, 0, 0, 0.08);
+            }}
+            QPushButton:pressed, QToolButton:pressed {{
+                background-color: rgba(0, 0, 0, 0.16);
             }}
             QPushButton#alarmBtn {{
                 {alarm_style}
             }}
-            QPushButton:hover, QToolButton:hover {{
-                background-color: {theme['border']};
+            QPushButton#closeBtn:hover {{
+                background-color: #EF4444;
+                color: #FFFFFF;
+                font-weight: bold;
+            }}
+            QPushButton#delBtn:hover {{
+                background-color: rgba(239, 68, 68, 0.15);
+                color: #DC2626;
             }}
             QTextEdit {{
                 background-color: transparent;
                 border: none;
                 color: {theme['text']};
-                line-height: 1.4;
+                font-size: 13px;
+                line-height: 1.5;
+                padding: 6px;
             }}
             QScrollArea {{
                 background-color: transparent;
                 border: none;
             }}
-            QLineEdit {{
-                background-color: rgba(255, 255, 255, 0.4);
-                border: 1px solid rgba(0, 0, 0, 0.08);
-                border-radius: 4px;
-                padding: 4px 6px;
+            QLineEdit#addTodoInput {{
+                background-color: rgba(255, 255, 255, 0.65);
+                border: 1px dashed {theme['border']};
+                border-radius: 8px;
+                padding: 6px 10px;
+                font-size: 12px;
                 color: {theme['text']};
             }}
-            QLineEdit:focus {{
+            QLineEdit#addTodoInput:hover {{
                 background-color: rgba(255, 255, 255, 0.85);
-                border-color: #3b82f6;
             }}
-            QTimeEdit {{
-                background-color: rgba(255, 255, 255, 0.7);
-                border: 1px solid rgba(0, 0, 0, 0.12);
-                border-radius: 4px;
-                padding: 1px 2px;
-                font-size: 11px;
-                color: {theme['text']};
+            QLineEdit#addTodoInput:focus {{
+                background-color: #FFFFFF;
+                border: 1.5px solid {theme['accent']};
             }}
             QPushButton#clearCompletedBtn {{
                 background: rgba(0, 0, 0, 0.04);
                 border: 1px solid rgba(0, 0, 0, 0.08);
-                border-radius: 4px;
+                border-radius: 6px;
                 font-size: 11px;
-                color: #64748b;
-                padding: 3px 6px;
+                color: #64748B;
+                padding: 4px 8px;
+                font-weight: 500;
             }}
             QPushButton#clearCompletedBtn:hover {{
                 background: rgba(239, 68, 68, 0.15);
-                color: #ef4444;
-                border-color: #ef4444;
+                color: #EF4444;
+                border-color: #EF4444;
             }}
         """
         self.alarm_btn.setObjectName("alarmBtn")
@@ -1248,7 +1467,7 @@ class StickyNoteWindow(QMainWindow):
         cursor.execute(
             """
             UPDATE sticky_notes
-            SET target_date = ?, target_time = ?, content = ?, color = ?, is_pinned = ?, is_alarm_enabled = ?, pos_x = ?, pos_y = ?, width = ?, height = ?
+            SET target_date = ?, target_time = ?, content = ?, color = ?, is_pinned = ?, is_alarm_enabled = ?, pos_x = ?, pos_y = ?, width = ?, height = ?, is_visible = ?
             WHERE id = ?
             """,
             (
@@ -1262,6 +1481,7 @@ class StickyNoteWindow(QMainWindow):
                 geo.y(),
                 geo.width(),
                 geo.height(),
+                1 if self.isVisible() else 0,
                 self.note_id,
             ),
         )
@@ -1325,8 +1545,8 @@ class StickyNoteWindow(QMainWindow):
             is_alarm_enabled=0,
             x=geo.x() + 35,
             y=geo.y() + 35,
-            w=geo.width(),
-            h=geo.height(),
+            w=max(480, geo.width()),
+            h=max(330, geo.height()),
         )
         active_windows.append(new_window)
         new_window.show()
@@ -1369,6 +1589,14 @@ class StickyTrayManager:
         action_align = QAction("🗂️ 화면에 바둑판식 정렬", self.menu)
         action_align.triggered.connect(self.align_notes)
         self.menu.addAction(action_align)
+
+        self.menu.addSeparator()
+
+        self.action_autostart = QAction("🚀 윈도우 시작 시 자동 실행", self.menu)
+        self.action_autostart.setCheckable(True)
+        self.action_autostart.setChecked(is_autostart_enabled())
+        self.action_autostart.triggered.connect(self.toggle_autostart)
+        self.menu.addAction(self.action_autostart)
 
         self.menu.addSeparator()
 
@@ -1425,8 +1653,8 @@ class StickyTrayManager:
             is_alarm_enabled=0,
             x=x,
             y=y,
-            w=390,
-            h=300,
+            w=480,
+            h=330,
         )
         active_windows.append(w)
         w.show()
@@ -1612,8 +1840,8 @@ class StickyTrayManager:
             is_alarm_enabled=0,
             x=200 + random.randint(0, 100),
             y=150 + random.randint(0, 100),
-            w=390,
-            h=300,
+            w=480,
+            h=330,
         )
         active_windows.append(w)
         w.show()
@@ -1631,7 +1859,7 @@ class StickyTrayManager:
 
         start_x, start_y = 50, 50
         gap = 20
-        col_w, row_h = 390, 310
+        col_w, row_h = 490, 340
         max_cols = 4
 
         for idx, w in enumerate(visible_windows):
@@ -1642,9 +1870,17 @@ class StickyTrayManager:
             w.move(new_x, new_y)
             w.auto_save()
 
-    def notify(self, title, message):
-        """풍선 도움말 토스트 알림"""
-        self.tray_icon.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 4000)
+    def toggle_autostart(self, checked):
+        """윈도우 시작 시 자동 실행 등록/해제 토글 핸들러"""
+        success = set_autostart(checked)
+        if success:
+            if checked:
+                self.notify("자동 실행 활성화", "🚀 이제 컴퓨터 부팅 시 스티커 메모가 자동으로 켜집니다!")
+            else:
+                self.notify("자동 실행 해제", "윈도우 시작 시 자동 실행이 해제되었습니다.")
+        else:
+            self.action_autostart.setChecked(not checked)
+            self.notify("설정 실패", "윈도우 시작 프로그램 설정 중 오류가 발생했습니다.")
 
     def exit_app(self):
         """프로그램 완전 종료 및 핫키 해제"""
@@ -1661,6 +1897,25 @@ class StickyTrayManager:
 
 def main():
     init_db()
+
+    # 윈도우 시작 시 자동 실행 기본 등록 및 경로 동기화
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)")
+        cur.execute("SELECT value FROM app_settings WHERE key = 'autostart_initialized'")
+        row = cur.fetchone()
+        if not row:
+            set_autostart(True)
+            cur.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('autostart_initialized', '1')")
+            conn.commit()
+        else:
+            if is_autostart_enabled():
+                set_autostart(True)
+        conn.close()
+    except Exception as e:
+        print("Autostart init notice:", e)
+
     app = QApplication(sys.argv)
     
     # 애플리케이션 아이콘 설정
@@ -1700,8 +1955,8 @@ def main():
                 is_alarm_enabled=row[6] or 0,
                 x=row[7],
                 y=row[8],
-                w=max(400, row[9]),
-                h=max(260, row[10]),
+                w=max(460, row[9]),
+                h=max(300, row[10]),
             )
             active_windows.append(w)
             if is_visible:
@@ -1726,8 +1981,8 @@ def main():
             is_alarm_enabled=0,
             x=200,
             y=200,
-            w=410,
-            h=300,
+            w=480,
+            h=330,
         )
         active_windows.append(initial_note)
         initial_note.show()
