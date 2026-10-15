@@ -1,45 +1,83 @@
 import sys
+import os
 import sqlite3
 import random
 from datetime import date, datetime
 import ctypes
 from ctypes import wintypes
-from PyQt6.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QTextEdit,
-    QVBoxLayout,
-    QHBoxLayout,
-    QWidget,
-    QDateEdit,
-    QTimeEdit,
-    QPushButton,
-    QToolButton,
-    QMenu,
-    QGraphicsDropShadowEffect,
-    QSystemTrayIcon,
-)
-from PyQt6.QtCore import QDate, QTime, Qt, QPoint, QTimer, QThread, pyqtSignal
-from PyQt6.QtGui import (
-    QColor,
-    QFont,
-    QAction,
-    QIcon,
-    QPixmap,
-    QPainter,
-    QBrush,
-    QPen,
-    QKeySequence,
-    QShortcut,
-    QCursor,
-)
+try:
+    from PyQt6.QtWidgets import (
+        QApplication,
+        QMainWindow,
+        QTextEdit,
+        QVBoxLayout,
+        QHBoxLayout,
+        QWidget,
+        QDateEdit,
+        QTimeEdit,
+        QPushButton,
+        QToolButton,
+        QMenu,
+        QGraphicsDropShadowEffect,
+        QSystemTrayIcon,
+    )
+    from PyQt6.QtCore import QDate, QTime, Qt, QPoint, QTimer, QThread, pyqtSignal
+    from PyQt6.QtGui import (
+        QColor,
+        QFont,
+        QAction,
+        QIcon,
+        QPixmap,
+        QPainter,
+        QBrush,
+        QPen,
+        QKeySequence,
+        QShortcut,
+        QCursor,
+    )
+except Exception:
+    from PySide6.QtWidgets import (
+        QApplication,
+        QMainWindow,
+        QTextEdit,
+        QVBoxLayout,
+        QHBoxLayout,
+        QWidget,
+        QDateEdit,
+        QTimeEdit,
+        QPushButton,
+        QToolButton,
+        QMenu,
+        QGraphicsDropShadowEffect,
+        QSystemTrayIcon,
+    )
+    from PySide6.QtCore import QDate, QTime, Qt, QPoint, QTimer, QThread, Signal as pyqtSignal
+    from PySide6.QtGui import (
+        QColor,
+        QFont,
+        QAction,
+        QIcon,
+        QPixmap,
+        QPainter,
+        QBrush,
+        QPen,
+        QKeySequence,
+        QShortcut,
+        QCursor,
+    )
 
 try:
     import winsound
 except ImportError:
     winsound = None
 
-DB_PATH = "sticky_notes.db"
+# DB 경로 설정 (exe로 단일 패키징 시 AppData 폴더에 안전하게 영구 보존)
+if getattr(sys, 'frozen', False):
+    app_data_dir = os.path.join(os.getenv("APPDATA", os.path.expanduser("~")), "StickyCalendar")
+    os.makedirs(app_data_dir, exist_ok=True)
+    DB_PATH = os.path.join(app_data_dir, "sticky_notes.db")
+else:
+    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sticky_notes.db")
 
 # 파스텔 톤 테마 정의 (배경색, 헤더색, 테두리색, 텍스트색)
 PASTEL_THEMES = {
@@ -679,6 +717,11 @@ def main():
     init_db()
     app = QApplication(sys.argv)
     
+    # 애플리케이션 아이콘 설정
+    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+
     # 마지막 창이 닫혀도 시스템 트레이에서 계속 실행 유지
     app.setQuitOnLastWindowClosed(False)
 
