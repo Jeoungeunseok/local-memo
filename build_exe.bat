@@ -29,7 +29,7 @@ if not exist "%LIB_BIN%" (
 
 echo [1/2] Building standalone executable with PyInstaller...
 set "PATH=%LIB_BIN%;%PATH%"
-"%PYI%" --noconsole --onefile --windowed --icon="app_icon.ico" --name="StickyCalendar" --paths="%LIB_BIN%" --add-binary="%LIB_BIN%\sqlite3.dll;." --add-binary="%LIB_BIN%\ffi.dll;." --clean sticky_calendar.py
+"%PYI%" --noconsole --onefile --windowed --icon="app_icon.ico" --name="StickyCalendar" --paths="%LIB_BIN%" --add-binary="%LIB_BIN%\sqlite3.dll;." --add-binary="%LIB_BIN%\ffi.dll;." --add-data="app_icon.ico;." --clean sticky_calendar.py
 
 if %errorlevel% equ 0 (
     echo.

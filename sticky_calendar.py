@@ -228,6 +228,29 @@ def create_tray_icon_pixmap(is_alert=False):
     painter.end()
     return pixmap
 
+def get_app_icon():
+    """모든 해상도(작업표시줄, 타이틀바, Alt+Tab, 시스템 트레이)를 완벽 지원하는 고화질 앱 아이콘 반환"""
+    icon = QIcon()
+
+    # 1. 파일에서 로드 시도 (PyInstaller 번들 내부 및 실행 디렉토리)
+    candidate_paths = []
+    if hasattr(sys, '_MEIPASS'):
+        candidate_paths.append(os.path.join(sys._MEIPASS, "app_icon.ico"))
+    candidate_paths.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico"))
+    if getattr(sys, 'frozen', False):
+        candidate_paths.append(os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "app_icon.ico"))
+
+    for p in candidate_paths:
+        if os.path.exists(p):
+            icon.addFile(p)
+            break
+
+    # 2. 파일 부재 시 동적 픽스맵 fallback
+    if icon.isNull():
+        icon.addPixmap(create_tray_icon_pixmap(is_alert=False))
+
+    return icon
+
 def get_advance_time(date_str, time_str, minutes=10):
     """지정 날짜 및 시간의 N분 전 날짜/시간(HH:mm) 계산 (자정 경계 자동 처리)"""
     try:
@@ -485,6 +508,7 @@ class CalendarWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("📅 캘린더 뷰 - 월간 일정 및 메모")
+        self.setWindowIcon(get_app_icon())
         self.resize(560, 640)
         self.setMinimumSize(500, 560)
         self._highlighted_dates = set()
@@ -874,9 +898,11 @@ class StickyNoteWindow(QMainWindow):
         self.is_todo_mode = bool(re.search(r'\[( |x)\]', content, re.IGNORECASE))
         self.todo_items = []
 
-        # 프레임리스 창 및 윈도우 기본 속성
+        # 프레임리스 창 및 윈도우 기본 속성 (작업표시줄에 개별 아이콘 버튼 표출)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setWindowTitle(f"스티커 메모 ({target_date or date.today().isoformat()})")
+        self.setWindowIcon(get_app_icon())
         self.setMinimumWidth(460)
         self.setMinimumHeight(260)
         self.setGeometry(x, y, max(460, w), max(300, h))
@@ -1900,6 +1926,14 @@ class StickyTrayManager:
 
 
 def main():
+    # 윈도우 작업표시줄(Taskbar) 앱 아이콘 및 개별 앱 그룹화 설정 (Win32 Shell API)
+    if sys.platform == "win32":
+        try:
+            myappid = "Jeoungeunseok.LocalMemo.StickyCalendar.1.0"
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception as e:
+            print("AppUserModelID notice:", e)
+
     init_db()
 
     # 윈도우 시작 시 자동 실행 기본 등록 및 경로 동기화
@@ -1922,10 +1956,10 @@ def main():
 
     app = QApplication(sys.argv)
     
-    # 애플리케이션 아이콘 설정
-    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
-    if os.path.exists(icon_path):
-        app.setWindowIcon(QIcon(icon_path))
+    # 애플리케이션 공식 아이콘 설정 (작업표시줄 및 모든 창 공통 적용)
+    app_icon = get_app_icon()
+    app.setWindowIcon(app_icon)
+    app.app_icon = app_icon
 
     # 마지막 창이 닫혀도 시스템 트레이에서 계속 실행 유지
     app.setQuitOnLastWindowClosed(False)
