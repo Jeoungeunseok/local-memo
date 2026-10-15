@@ -31,10 +31,10 @@
 
 ## Docker 컨테이너로 실행 (권장)
 
-현재 Docker 컨테이너가 이미 빌드되어 포트 `8000`에서 실행 중입니다.
+현재 Docker 컨테이너가 이미 빌드되어 포트 `8080`에서 실행 중입니다.
 
 ### 브라우저 접속 주소
-**[http://localhost:8000](http://localhost:8000)**
+**[http://localhost:8080](http://localhost:8080)**
 
 ### 실행 및 관리 명령어
 ```bash

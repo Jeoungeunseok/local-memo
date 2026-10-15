@@ -3,7 +3,7 @@ services:
     image: python-class-app:latest
     container_name: sticky_memo_app
     ports:
-      - "8000:8000"
+      - "8080:8000"
     volumes:
       - .:/app
     working_dir: /app
