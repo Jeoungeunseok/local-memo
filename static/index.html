@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>스티커 메모 캘린더 - Sticky Note Calendar</title>
+  <meta name="description" content="파스텔톤 포스트잇 스타일 스티커 메모 캘린더. 드래그 이동, 실시간 자동 복원, 투두 체크리스트 및 캘린더 연동.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <!-- 상단 네비게이션 헤더 -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="logo">
+        <span class="logo-icon">📌</span>
+        <div class="logo-text">
+          <h1>스티커 메모 캘린더</h1>
+          <span class="sub-text">Sticky Note & Calendar</span>
+        </div>
+      </div>
+      <div class="status-badge" id="dockerStatusBadge">
+        <span class="pulse-dot"></span>
+        <span>Docker Container Live (:8000)</span>
+      </div>
+    </div>
+
+    <!-- 중앙 컨트롤: 검색 및 날짜 필터 -->
+    <div class="header-center">
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="searchInput" placeholder="메모 내용 및 날짜 검색..." autocomplete="off">
+        <button id="clearSearchBtn" class="clear-btn" title="검색어 지우기">✕</button>
+      </div>
+
+      <div class="filter-group">
+        <button id="filterAllBtn" class="filter-pill active">전체 메모</button>
+        <button id="filterTodayBtn" class="filter-pill">오늘 (<span id="todayDateStr"></span>)</button>
+        <input type="date" id="headerDateFilter" class="date-filter-input" title="특정 날짜 필터">
+      </div>
+    </div>
+
+    <!-- 우측 액션 버튼 -->
+    <div class="header-right">
+      <button id="newNoteBtn" class="btn btn-primary" title="새 포스트잇 메모 추가">
+        <span class="btn-icon">➕</span>
+        <span>새 메모</span>
+      </button>
+
+      <button id="toggleCalendarBtn" class="btn btn-secondary" title="월별 캘린더 열기/닫기">
+        <span class="btn-icon">📅</span>
+        <span>캘린더 뷰</span>
+      </button>
+
+      <button id="alignNotesBtn" class="btn btn-secondary" title="메모 바둑판식 정렬">
+        <span class="btn-icon">🗂️</span>
+        <span>자동 정렬</span>
+      </button>
+
+      <button id="themeToggleBtn" class="btn btn-icon-only" title="배경 테마 변경">
+        <span id="themeIcon">🌓</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- 메인 캔버스 영역 -->
+  <main class="workspace" id="workspace">
+    <!-- 빈 상태 안내 메시지 (메모 없을 때 표시) -->
+    <div id="emptyState" class="empty-state hidden">
+      <div class="empty-card">
+        <div class="empty-icon">📝</div>
+        <h2>작성된 메모가 없습니다</h2>
+        <p>상단의 <strong>[➕ 새 메모]</strong> 버튼을 누르거나 바탕화면을 더블클릭하여 포스트잇을 추가해 보세요.</p>
+        <button id="emptyNewBtn" class="btn btn-primary">지금 새 메모 만들기</button>
+      </div>
+    </div>
+
+    <!-- 동적으로 생성되는 포스트잇 메모 컨테이너 -->
+    <div id="notesContainer" class="notes-container"></div>
+  </main>
+
+  <!-- 슬라이드형 캘린더 사이드 패널 -->
+  <aside id="calendarSidebar" class="calendar-sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-title">
+        <span>📅</span>
+        <h3>일정 캘린더</h3>
+      </div>
+      <button id="closeCalendarBtn" class="icon-btn" title="닫기">✕</button>
+    </div>
+
+    <div class="calendar-wrapper">
+      <div class="calendar-nav">
+        <button id="calPrevMonthBtn" class="cal-nav-btn">◀</button>
+        <h4 id="calCurrentMonth">2026년 10월</h4>
+        <button id="calNextMonthBtn" class="cal-nav-btn">▶</button>
+      </div>
+
+      <div class="calendar-weekdays">
+        <span class="sun">일</span>
+        <span>월</span>
+        <span>화</span>
+        <span>수</span>
+        <span>목</span>
+        <span>금</span>
+        <span class="sat">토</span>
+      </div>
+
+      <div id="calendarGrid" class="calendar-grid">
+        <!-- 캘린더 날짜 셀들이 JS로 렌더링됨 -->
+      </div>
+    </div>
+
+    <!-- 선택된 날짜의 메모 요약 리스트 -->
+    <div class="selected-day-details">
+      <div class="details-header">
+        <h4 id="selectedDateTitle">오늘의 일정 메모</h4>
+        <button id="addNoteForSelectedDateBtn" class="btn-sm btn-primary">➕ 이 날짜에 메모</button>
+      </div>
+      <div id="selectedDateNotesList" class="day-notes-list">
+        <p class="no-notes-hint">이 날짜에 등록된 메모가 없습니다.</p>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 하단 상태 바 -->
+  <footer class="app-footer">
+    <div class="footer-left">
+      <span id="noteCountDisplay">메모 0개</span>
+      <span class="divider">|</span>
+      <span id="syncStatus">☁️ 로컬 SQLite 실시간 동기화 완료</span>
+    </div>
+    <div class="footer-right">
+      <span class="hint-text">💡 팁: 더블클릭으로 새 메모 생성, 모서리를 드래그하여 크기 조절</span>
+    </div>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
