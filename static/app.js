@@ -31,6 +31,11 @@ const headerDateFilter = document.getElementById('headerDateFilter');
 const todayDateStr = document.getElementById('todayDateStr');
 const noteCountDisplay = document.getElementById('noteCountDisplay');
 const syncStatus = document.getElementById('syncStatus');
+const toggleVisibilityBtn = document.getElementById('toggleVisibilityBtn');
+const visibilityText = document.getElementById('visibilityText');
+const dockWidget = document.getElementById('dockWidget');
+const dockCountText = document.getElementById('dockCountText');
+let minimizedNoteIds = new Set();
 
 // Calendar Elements
 const calPrevMonthBtn = document.getElementById('calPrevMonthBtn');
@@ -88,6 +93,14 @@ function setupEventListeners() {
   });
 
   alignNotesBtn.addEventListener('click', autoAlignNotes);
+
+  if (toggleVisibilityBtn) {
+    toggleVisibilityBtn.addEventListener('click', toggleAllNotesVisibility);
+  }
+
+  if (dockWidget) {
+    dockWidget.addEventListener('click', restoreAllNotes);
+  }
 
   themeToggleBtn.addEventListener('click', () => {
     document.body.classList.toggle('dark-mode');
@@ -288,6 +301,7 @@ function createNoteElement(note) {
           </div>
         </div>
         <button class="note-tool-btn add-btn" title="새 메모">➕</button>
+        <button class="note-tool-btn min-btn" title="트레이(독)로 최소화">➖</button>
         <button class="note-tool-btn del-btn" title="삭제">✕</button>
       </div>
     </div>
@@ -387,6 +401,17 @@ function attachNoteEvents(noteEl, note) {
       target_date: note.target_date
     });
   });
+
+  // Minimize to dock
+  const minBtn = noteEl.querySelector('.min-btn');
+  if (minBtn) {
+    minBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      minimizedNoteIds.add(note.id);
+      noteEl.classList.add('minimized');
+      updateDockState();
+    });
+  }
 
   // Delete note
   delBtn.addEventListener('click', async (e) => {
@@ -753,6 +778,43 @@ function filterNotesDisplay() {
     emptyState.querySelector('p').textContent = '상단의 [➕ 새 메모] 버튼을 눌러 메모를 만들어보세요.';
   } else {
     emptyState.classList.add('hidden');
+  }
+}
+
+// Toggle all notes visibility (Tray / Dock behavior)
+function toggleAllNotesVisibility() {
+  const visibleElements = document.querySelectorAll('.sticky-note:not(.minimized)');
+  if (visibleElements.length > 0) {
+    // Hide all
+    notes.forEach(n => {
+      minimizedNoteIds.add(n.id);
+      const el = document.getElementById(`note-${n.id}`);
+      if (el) el.classList.add('minimized');
+    });
+  } else {
+    // Restore all
+    restoreAllNotes();
+  }
+  updateDockState();
+}
+
+function restoreAllNotes() {
+  minimizedNoteIds.clear();
+  document.querySelectorAll('.sticky-note.minimized').forEach(el => {
+    el.classList.remove('minimized');
+  });
+  updateDockState();
+}
+
+function updateDockState() {
+  const count = minimizedNoteIds.size;
+  if (count > 0) {
+    if (dockWidget) dockWidget.classList.remove('hidden');
+    if (dockCountText) dockCountText.textContent = `${count}개의 메모 숨겨짐`;
+    if (visibilityText) visibilityText.textContent = '전체 보이기';
+  } else {
+    if (dockWidget) dockWidget.classList.add('hidden');
+    if (visibilityText) visibilityText.textContent = '전체 숨기기';
   }
 }
 

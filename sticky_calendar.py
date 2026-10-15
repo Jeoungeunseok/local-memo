@@ -14,9 +14,10 @@ from PyQt6.QtWidgets import (
     QToolButton,
     QMenu,
     QGraphicsDropShadowEffect,
+    QSystemTrayIcon,
 )
 from PyQt6.QtCore import QDate, Qt, QPoint
-from PyQt6.QtGui import QColor, QFont, QAction
+from PyQt6.QtGui import QColor, QFont, QAction, QIcon, QPixmap, QPainter, QBrush, QPen
 
 DB_PATH = "sticky_notes.db"
 
@@ -28,6 +29,32 @@ PASTEL_THEMES = {
     "orange": {"bg": "#FBEEE6", "header": "#F6DDCC", "border": "#EDBB99", "text": "#333333"},
     "purple": {"bg": "#F4ECF7", "header": "#E8DAEF", "border": "#D2B4DE", "text": "#333333"},
 }
+
+def create_tray_icon_pixmap():
+    """트레이용 귀여운 포스트잇 픽스맵 아이콘 생성"""
+    pixmap = QPixmap(32, 32)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    # 포스트잇 본체 (노랑)
+    painter.setBrush(QBrush(QColor("#FDEBD0")))
+    painter.setPen(QPen(QColor("#FAD7A0"), 1.5))
+    painter.drawRoundedRect(3, 4, 26, 24, 4, 4)
+
+    # 핀(Pin) 포인트 (빨강)
+    painter.setBrush(QBrush(QColor("#EF4444")))
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.drawEllipse(13, 1, 6, 6)
+
+    # 포스트잇 라인
+    painter.setPen(QPen(QColor("#D97706"), 1.5))
+    painter.drawLine(8, 12, 22, 12)
+    painter.drawLine(8, 17, 24, 17)
+    painter.drawLine(8, 22, 18, 22)
+
+    painter.end()
+    return pixmap
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -49,6 +76,8 @@ def init_db():
     )
     conn.commit()
     conn.close()
+
+active_windows = []
 
 class StickyNoteWindow(QMainWindow):
     def __init__(self, note_id=None, target_date=None, content="", color="yellow", is_pinned=0, x=150, y=150, w=320, h=300):
@@ -91,7 +120,7 @@ class StickyNoteWindow(QMainWindow):
 
         # 항상 위 핀 버튼
         self.pin_btn = QPushButton("📌" if self.is_pinned else "📍")
-        self.pin_btn.setFixedSize(28, 26)
+        self.pin_btn.setFixedSize(26, 26)
         self.pin_btn.setToolTip("항상 위에 고정")
         self.pin_btn.clicked.connect(self.toggle_pin)
         header_layout.addWidget(self.pin_btn)
@@ -99,7 +128,7 @@ class StickyNoteWindow(QMainWindow):
         # 색상 변경 메뉴 버튼
         self.color_btn = QToolButton()
         self.color_btn.setText("🎨")
-        self.color_btn.setFixedSize(28, 26)
+        self.color_btn.setFixedSize(26, 26)
         self.color_menu = QMenu(self)
         for theme_name in PASTEL_THEMES.keys():
             action = QAction(theme_name.capitalize(), self)
@@ -111,21 +140,28 @@ class StickyNoteWindow(QMainWindow):
 
         # 투두 체크박스 추가 버튼
         todo_btn = QPushButton("☑️")
-        todo_btn.setFixedSize(28, 26)
+        todo_btn.setFixedSize(26, 26)
         todo_btn.setToolTip("체크박스 투두 추가")
         todo_btn.clicked.connect(self.add_todo_item)
         header_layout.addWidget(todo_btn)
 
         # 새 메모 추가 버튼
         new_btn = QPushButton("➕")
-        new_btn.setFixedSize(28, 26)
+        new_btn.setFixedSize(26, 26)
         new_btn.setToolTip("새 일정 메모")
         new_btn.clicked.connect(self.create_new_window)
         header_layout.addWidget(new_btn)
 
+        # 트레이로 숨기기 (최소화) 버튼
+        hide_btn = QPushButton("➖")
+        hide_btn.setFixedSize(26, 26)
+        hide_btn.setToolTip("트레이로 숨기기 (트레이 아이콘 클릭 시 복원)")
+        hide_btn.clicked.connect(self.hide_to_tray)
+        header_layout.addWidget(hide_btn)
+
         # 삭제 버튼
         del_btn = QPushButton("✕")
-        del_btn.setFixedSize(28, 26)
+        del_btn.setFixedSize(26, 26)
         del_btn.setToolTip("삭제")
         del_btn.clicked.connect(self.delete_note)
         header_layout.addWidget(del_btn)
@@ -225,6 +261,11 @@ class StickyNoteWindow(QMainWindow):
         self.text_edit.setFocus()
         self.auto_save()
 
+    def hide_to_tray(self):
+        self.hide()
+        if hasattr(QApplication.instance(), "tray_manager"):
+            QApplication.instance().tray_manager.notify("메모 숨김", "메모가 트레이로 최소화되었습니다. 트레이 아이콘을 누르면 다시 열립니다.")
+
     def save_initial(self):
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -311,11 +352,126 @@ class StickyNoteWindow(QMainWindow):
         active_windows.append(new_window)
         new_window.show()
 
-active_windows = []
+
+class StickyTrayManager:
+    """시스템 트레이 아이콘 및 메뉴 관리자"""
+    def __init__(self, app):
+        self.app = app
+        self.tray_icon = QSystemTrayIcon(app)
+        
+        # 트레이 아이콘 설정
+        icon = QIcon(create_tray_icon_pixmap())
+        self.tray_icon.setIcon(icon)
+        self.tray_icon.setToolTip("스티커 메모 캘린더 (Sticky Notes)")
+
+        # 트레이 컨텍스트 메뉴 생성
+        self.menu = QMenu()
+        
+        action_new = QAction("➕ 새 메모 만들기", self.menu)
+        action_new.triggered.connect(self.create_new_note)
+        self.menu.addAction(action_new)
+
+        self.action_toggle = QAction("👁️ 모든 메모 보이기/숨기기", self.menu)
+        self.action_toggle.triggered.connect(self.toggle_all_notes)
+        self.menu.addAction(self.action_toggle)
+
+        action_align = QAction("🗂️ 화면에 바둑판식 정렬", self.menu)
+        action_align.triggered.connect(self.align_notes)
+        self.menu.addAction(action_align)
+
+        self.menu.addSeparator()
+
+        action_quit = QAction("🚪 프로그램 완전 종료", self.menu)
+        action_quit.triggered.connect(self.exit_app)
+        self.menu.addAction(action_quit)
+
+        self.tray_icon.setContextMenu(self.menu)
+
+        # 클릭 / 더블클릭 이벤트 연결 (보이기/숨기기 토글)
+        self.tray_icon.activated.connect(self.on_tray_activated)
+        self.tray_icon.show()
+
+    def on_tray_activated(self, reason):
+        if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
+            self.toggle_all_notes()
+
+    def toggle_all_notes(self):
+        """모든 메모 보이기/숨기기 토글"""
+        if not active_windows:
+            self.create_new_note()
+            return
+
+        any_visible = any(w.isVisible() for w in active_windows)
+        if any_visible:
+            for w in active_windows:
+                w.hide()
+        else:
+            for w in active_windows:
+                w.show()
+                w.raise_()
+                w.activateWindow()
+
+    def create_new_note(self):
+        """트레이 메뉴에서 새 메모 생성"""
+        color_choices = list(PASTEL_THEMES.keys())
+        random_color = random.choice(color_choices)
+        w = StickyNoteWindow(
+            note_id=None,
+            target_date=date.today().isoformat(),
+            content="",
+            color=random_color,
+            is_pinned=0,
+            x=200 + random.randint(0, 100),
+            y=150 + random.randint(0, 100),
+            w=320,
+            h=300,
+        )
+        active_windows.append(w)
+        w.show()
+        w.raise_()
+        w.activateWindow()
+
+    def align_notes(self):
+        """화면에 활성 메모들을 바둑판 형태로 자동 정렬"""
+        visible_windows = [w for w in active_windows if w.isVisible()]
+        if not visible_windows:
+            for w in active_windows:
+                w.show()
+            visible_windows = active_windows
+
+        start_x, start_y = 50, 50
+        gap = 20
+        col_w, row_h = 330, 310
+        max_cols = 4
+
+        for idx, w in enumerate(visible_windows):
+            col = idx % max_cols
+            row = idx // max_cols
+            new_x = start_x + col * (col_w + gap)
+            new_y = start_y + row * (row_h + gap)
+            w.move(new_x, new_y)
+            w.auto_save()
+
+    def notify(self, title, message):
+        """풍선 도움말 토스트 알림"""
+        self.tray_icon.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 2000)
+
+    def exit_app(self):
+        """프로그램 완전 종료"""
+        self.tray_icon.hide()
+        self.app.quit()
+
 
 def main():
     init_db()
     app = QApplication(sys.argv)
+    
+    # 마지막 창이 닫혀도 시스템 트레이에서 계속 실행 유지
+    app.setQuitOnLastWindowClosed(False)
+
+    # 시스템 트레이 관리자 활성화
+    tray_manager = StickyTrayManager(app)
+    app.tray_manager = tray_manager
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -358,6 +514,9 @@ def main():
         )
         active_windows.append(initial_note)
         initial_note.show()
+
+    # 트레이 실행 안내 알림
+    tray_manager.notify("스티커 메모 캘린더 시작", "시스템 트레이에 등록되었습니다. 아이콘을 클릭하여 모든 메모를 숨기거나 표시할 수 있습니다.")
 
     sys.exit(app.exec())
 

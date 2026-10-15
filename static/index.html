@@ -59,6 +59,11 @@
         <span>자동 정렬</span>
       </button>
 
+      <button id="toggleVisibilityBtn" class="btn btn-secondary" title="모든 메모 숨기기/보이기">
+        <span class="btn-icon">👁️</span>
+        <span id="visibilityText">전체 숨기기</span>
+      </button>
+
       <button id="themeToggleBtn" class="btn btn-icon-only" title="배경 테마 변경">
         <span id="themeIcon">🌓</span>
       </button>
@@ -79,6 +84,15 @@
 
     <!-- 동적으로 생성되는 포스트잇 메모 컨테이너 -->
     <div id="notesContainer" class="notes-container"></div>
+
+    <!-- 하단 우측 플로팅 독 / 트레이 위젯 -->
+    <div id="dockWidget" class="dock-widget hidden" title="클릭하여 숨겨진 메모 모두 복원">
+      <div class="dock-content">
+        <span class="dock-icon">📌</span>
+        <span id="dockCountText">3개의 메모 숨겨짐</span>
+        <span class="dock-action-hint">클릭하여 펼치기 ↗</span>
+      </div>
+    </div>
   </main>
 
   <!-- 슬라이드형 캘린더 사이드 패널 -->

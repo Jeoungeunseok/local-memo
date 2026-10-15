@@ -985,3 +985,69 @@ body.dark-mode .cal-day:hover {
 .divider {
   opacity: 0.3;
 }
+
+/* =========================================
+   플로팅 독 / 트레이 위젯 (Dock Widget)
+   ========================================= */
+.sticky-note.minimized {
+  opacity: 0 !important;
+  transform: scale(0.6) translateY(40px) !important;
+  pointer-events: none !important;
+  visibility: hidden;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.dock-widget {
+  position: fixed;
+  bottom: 46px;
+  right: 24px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--primary-color);
+  border-radius: 999px;
+  padding: 8px 16px;
+  box-shadow: 0 10px 25px -5px rgba(59, 130, 246, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  z-index: 1050;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body.dark-mode .dock-widget {
+  background: rgba(30, 41, 59, 0.95);
+  border-color: #60a5fa;
+}
+
+.dock-widget:hover {
+  transform: translateY(-3px) scale(1.03);
+  box-shadow: 0 16px 30px -5px rgba(59, 130, 246, 0.4);
+}
+
+.dock-widget.hidden {
+  display: none !important;
+}
+
+.dock-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.dock-icon {
+  font-size: 16px;
+}
+
+.dock-action-hint {
+  font-size: 11px;
+  color: var(--primary-color);
+  margin-left: 4px;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
