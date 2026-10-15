@@ -33,6 +33,9 @@ const noteCountDisplay = document.getElementById('noteCountDisplay');
 const syncStatus = document.getElementById('syncStatus');
 const toggleVisibilityBtn = document.getElementById('toggleVisibilityBtn');
 const visibilityText = document.getElementById('visibilityText');
+const shortcutsBtn = document.getElementById('shortcutsBtn');
+const shortcutsModal = document.getElementById('shortcutsModal');
+const closeShortcutsModalBtn = document.getElementById('closeShortcutsModalBtn');
 const dockWidget = document.getElementById('dockWidget');
 const dockCountText = document.getElementById('dockCountText');
 let minimizedNoteIds = new Set();
@@ -168,6 +171,95 @@ function setupEventListeners() {
   document.addEventListener('click', (e) => {
     if (!e.target.closest('.color-menu-container')) {
       document.querySelectorAll('.color-dropdown.show').forEach(d => d.classList.remove('show'));
+    }
+  });
+
+  // Shortcuts modal
+  if (shortcutsBtn && shortcutsModal) {
+    shortcutsBtn.addEventListener('click', () => {
+      shortcutsModal.classList.remove('hidden');
+    });
+  }
+
+  if (closeShortcutsModalBtn && shortcutsModal) {
+    closeShortcutsModalBtn.addEventListener('click', () => {
+      shortcutsModal.classList.add('hidden');
+    });
+  }
+
+  if (shortcutsModal) {
+    shortcutsModal.addEventListener('click', (e) => {
+      if (e.target === shortcutsModal) {
+        shortcutsModal.classList.add('hidden');
+      }
+    });
+  }
+
+  // Global Keyboard Shortcuts
+  window.addEventListener('keydown', (e) => {
+    const isTyping = ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName);
+
+    // Alt + N: New Note
+    if (e.altKey && (e.key === 'n' || e.key === 'N')) {
+      e.preventDefault();
+      createNewNote();
+      return;
+    }
+
+    // Alt + H: Toggle All Notes Visibility
+    if (e.altKey && (e.key === 'h' || e.key === 'H')) {
+      e.preventDefault();
+      toggleAllNotesVisibility();
+      return;
+    }
+
+    // Alt + C: Toggle Calendar Sidebar
+    if (e.altKey && (e.key === 'c' || e.key === 'C')) {
+      e.preventDefault();
+      calendarSidebar.classList.toggle('open');
+      if (calendarSidebar.classList.contains('open')) renderCalendar();
+      return;
+    }
+
+    // Alt + A: Auto Align
+    if (e.altKey && (e.key === 'a' || e.key === 'A')) {
+      e.preventDefault();
+      autoAlignNotes();
+      return;
+    }
+
+    // Ctrl + F: Focus Search
+    if (e.ctrlKey && (e.key === 'f' || e.key === 'F') && !e.altKey) {
+      e.preventDefault();
+      searchInput.focus();
+      searchInput.select();
+      return;
+    }
+
+    // Ctrl + / or ?: Shortcuts Modal
+    if ((e.ctrlKey && e.key === '/') || (e.key === '?' && !isTyping)) {
+      e.preventDefault();
+      if (shortcutsModal) shortcutsModal.classList.toggle('hidden');
+      return;
+    }
+
+    // Escape: Close modals, calendar, or search
+    if (e.key === 'Escape') {
+      if (shortcutsModal && !shortcutsModal.classList.contains('hidden')) {
+        shortcutsModal.classList.add('hidden');
+        return;
+      }
+      if (calendarSidebar.classList.contains('open')) {
+        calendarSidebar.classList.remove('open');
+        return;
+      }
+      if (document.activeElement === searchInput) {
+        searchInput.value = '';
+        activeSearchQuery = '';
+        filterNotesDisplay();
+        searchInput.blur();
+        return;
+      }
     }
   });
 }

@@ -59,9 +59,14 @@
         <span>자동 정렬</span>
       </button>
 
-      <button id="toggleVisibilityBtn" class="btn btn-secondary" title="모든 메모 숨기기/보이기">
+      <button id="toggleVisibilityBtn" class="btn btn-secondary" title="모든 메모 숨기기/보이기 (Alt+H)">
         <span class="btn-icon">👁️</span>
         <span id="visibilityText">전체 숨기기</span>
+      </button>
+
+      <button id="shortcutsBtn" class="btn btn-secondary" title="단축키 안내 (Ctrl+/)">
+        <span class="btn-icon">⌨️</span>
+        <span>단축키</span>
       </button>
 
       <button id="themeToggleBtn" class="btn btn-icon-only" title="배경 테마 변경">
@@ -153,6 +158,58 @@
       <span class="hint-text">💡 팁: 더블클릭으로 새 메모 생성, 모서리를 드래그하여 크기 조절</span>
     </div>
   </footer>
+
+  <!-- 단축키 안내 모달 -->
+  <div id="shortcutsModal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title">
+          <span>⌨️</span>
+          <h3>단축키 안내 (Keyboard Shortcuts)</h3>
+        </div>
+        <button id="closeShortcutsModalBtn" class="icon-btn" title="닫기 (Esc)">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="shortcut-list">
+          <div class="shortcut-item">
+            <span class="shortcut-desc">새 포스트잇 메모 생성</span>
+            <div class="shortcut-keys"><kbd>Alt</kbd> + <kbd>N</kbd></div>
+          </div>
+          <div class="shortcut-item">
+            <span class="shortcut-desc">모든 메모 숨기기 / 보이기 (독 토글)</span>
+            <div class="shortcut-keys"><kbd>Alt</kbd> + <kbd>H</kbd></div>
+          </div>
+          <div class="shortcut-item">
+            <span class="shortcut-desc">월별 캘린더 뷰 열기 / 닫기</span>
+            <div class="shortcut-keys"><kbd>Alt</kbd> + <kbd>C</kbd></div>
+          </div>
+          <div class="shortcut-item">
+            <span class="shortcut-desc">화면 메모 바둑판식 자동 정렬</span>
+            <div class="shortcut-keys"><kbd>Alt</kbd> + <kbd>A</kbd></div>
+          </div>
+          <div class="shortcut-item">
+            <span class="shortcut-desc">메모 내용 및 날짜 검색창 포커스</span>
+            <div class="shortcut-keys"><kbd>Ctrl</kbd> + <kbd>F</kbd></div>
+          </div>
+          <div class="shortcut-item">
+            <span class="shortcut-desc">단축키 안내 모달 열기</span>
+            <div class="shortcut-keys"><kbd>Ctrl</kbd> + <kbd>/</kbd></div>
+          </div>
+          <div class="shortcut-item">
+            <span class="shortcut-desc">바탕화면 더블클릭</span>
+            <div class="shortcut-keys"><kbd>Double Click</kbd></div>
+          </div>
+          <div class="shortcut-item">
+            <span class="shortcut-desc">모달 닫기 / 검색창 비우기</span>
+            <div class="shortcut-keys"><kbd>Esc</kbd></div>
+          </div>
+        </div>
+        <div class="modal-footer-hint">
+          <span>💡 <strong>로컬 데스크톱 앱(PyQt6)</strong>에서는 다른 작업(웹서핑, 코딩 등) 중에도 <kbd>Alt</kbd> + <kbd>N</kbd>을 누르면 마우스 커서 위치에 즉시 새 포스트잇이 생성됩니다.</span>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script src="/static/app.js"></script>
 </body>

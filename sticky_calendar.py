@@ -2,6 +2,8 @@ import sys
 import sqlite3
 import random
 from datetime import date, datetime
+import ctypes
+from ctypes import wintypes
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -17,8 +19,20 @@ from PyQt6.QtWidgets import (
     QGraphicsDropShadowEffect,
     QSystemTrayIcon,
 )
-from PyQt6.QtCore import QDate, QTime, Qt, QPoint, QTimer
-from PyQt6.QtGui import QColor, QFont, QAction, QIcon, QPixmap, QPainter, QBrush, QPen
+from PyQt6.QtCore import QDate, QTime, Qt, QPoint, QTimer, QThread, pyqtSignal
+from PyQt6.QtGui import (
+    QColor,
+    QFont,
+    QAction,
+    QIcon,
+    QPixmap,
+    QPainter,
+    QBrush,
+    QPen,
+    QKeySequence,
+    QShortcut,
+    QCursor,
+)
 
 try:
     import winsound
@@ -96,6 +110,40 @@ def init_db():
 
 active_windows = []
 
+class GlobalHotkeyThread(QThread):
+    """Windows OS 전역 단축키 수신 스레드 (ctypes 기반)"""
+    new_note_signal = pyqtSignal()
+    toggle_all_signal = pyqtSignal()
+
+    def run(self):
+        if sys.platform != "win32":
+            return
+        try:
+            user32 = ctypes.windll.user32
+            MOD_ALT = 0x0001
+            MOD_CONTROL = 0x0002
+            VK_N = 0x4E  # N key
+            VK_M = 0x4D  # M key
+            HOTKEY_ID_NEW = 101
+            HOTKEY_ID_TOGGLE = 102
+
+            # Alt + N (새 메모 생성), Alt + M (모든 메모 숨기기/보이기)
+            user32.RegisterHotKey(None, HOTKEY_ID_NEW, MOD_ALT, VK_N)
+            user32.RegisterHotKey(None, HOTKEY_ID_TOGGLE, MOD_ALT, VK_M)
+
+            msg = wintypes.MSG()
+            while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
+                if msg.message == 0x0312:  # WM_HOTKEY
+                    if msg.wParam == HOTKEY_ID_NEW:
+                        self.new_note_signal.emit()
+                    elif msg.wParam == HOTKEY_ID_TOGGLE:
+                        self.toggle_all_signal.emit()
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+        except Exception as e:
+            print("Hotkey thread notice:", e)
+
+
 class StickyNoteWindow(QMainWindow):
     def __init__(self, note_id=None, target_date=None, target_time="", content="", color="yellow", is_pinned=0, is_alarm_enabled=0, x=150, y=150, w=340, h=300):
         super().__init__()
@@ -156,7 +204,7 @@ class StickyNoteWindow(QMainWindow):
         # 항상 위 핀 버튼
         self.pin_btn = QPushButton("📌" if self.is_pinned else "📍")
         self.pin_btn.setFixedSize(26, 26)
-        self.pin_btn.setToolTip("항상 위에 고정")
+        self.pin_btn.setToolTip("항상 위에 고정 (Ctrl+P)")
         self.pin_btn.clicked.connect(self.toggle_pin)
         header_layout.addWidget(self.pin_btn)
 
@@ -176,28 +224,28 @@ class StickyNoteWindow(QMainWindow):
         # 투두 체크박스 추가 버튼
         todo_btn = QPushButton("☑️")
         todo_btn.setFixedSize(26, 26)
-        todo_btn.setToolTip("체크박스 투두 추가")
+        todo_btn.setToolTip("체크박스 투두 추가 (Ctrl+T)")
         todo_btn.clicked.connect(self.add_todo_item)
         header_layout.addWidget(todo_btn)
 
         # 새 메모 추가 버튼
         new_btn = QPushButton("➕")
         new_btn.setFixedSize(26, 26)
-        new_btn.setToolTip("새 일정 메모")
+        new_btn.setToolTip("새 일정 메모 (Ctrl+N)")
         new_btn.clicked.connect(self.create_new_window)
         header_layout.addWidget(new_btn)
 
         # 트레이로 숨기기 (최소화) 버튼
         hide_btn = QPushButton("➖")
         hide_btn.setFixedSize(26, 26)
-        hide_btn.setToolTip("트레이로 숨기기")
+        hide_btn.setToolTip("트레이로 숨기기 (Esc / Ctrl+H)")
         hide_btn.clicked.connect(self.hide_to_tray)
         header_layout.addWidget(hide_btn)
 
         # 삭제 버튼
         del_btn = QPushButton("✕")
         del_btn.setFixedSize(26, 26)
-        del_btn.setToolTip("삭제")
+        del_btn.setToolTip("삭제 (Ctrl+D)")
         del_btn.clicked.connect(self.delete_note)
         header_layout.addWidget(del_btn)
 
@@ -217,10 +265,23 @@ class StickyNoteWindow(QMainWindow):
         shadow.setOffset(2, 3)
         self.container.setGraphicsEffect(shadow)
 
+        # 인앱 단축키 등록
+        self.setup_shortcuts()
+
         self.apply_style()
 
         if self.note_id is None:
             self.save_initial()
+
+    def setup_shortcuts(self):
+        """창 내부 단축키 바인딩"""
+        QShortcut(QKeySequence("Ctrl+N"), self, self.create_new_window)
+        QShortcut(QKeySequence("Ctrl+P"), self, self.toggle_pin)
+        QShortcut(QKeySequence("Ctrl+T"), self, self.add_todo_item)
+        QShortcut(QKeySequence("Ctrl+S"), self, self.auto_save)
+        QShortcut(QKeySequence("Ctrl+D"), self, self.delete_note)
+        QShortcut(QKeySequence("Ctrl+H"), self, self.hide_to_tray)
+        QShortcut(QKeySequence("Escape"), self, self.hide_to_tray)
 
     def apply_style(self):
         theme = PASTEL_THEMES[self.current_color]
@@ -316,7 +377,7 @@ class StickyNoteWindow(QMainWindow):
     def hide_to_tray(self):
         self.hide()
         if hasattr(QApplication.instance(), "tray_manager"):
-            QApplication.instance().tray_manager.notify("메모 숨김", "메모가 트레이로 최소화되었습니다. 트레이 아이콘을 누르면 다시 열립니다.")
+            QApplication.instance().tray_manager.notify("메모 숨김", "메모가 트레이로 최소화되었습니다. (Alt+M 또는 트레이 클릭 시 복원)")
 
     def save_initial(self):
         conn = sqlite3.connect(DB_PATH)
@@ -414,25 +475,25 @@ class StickyNoteWindow(QMainWindow):
 
 
 class StickyTrayManager:
-    """시스템 트레이 아이콘 및 메뉴 & 알람 스케줄러 관리자"""
+    """시스템 트레이 아이콘 및 메뉴 & 알람 스케줄러 & 글로벌 단축키 관리자"""
     def __init__(self, app):
         self.app = app
         self.tray_icon = QSystemTrayIcon(app)
-        self.triggered_alarms = set() # (note_id, yyyy-mm-dd hh:mm) 방지용
+        self.triggered_alarms = set()
         
         # 트레이 아이콘 설정
         icon = QIcon(create_tray_icon_pixmap())
         self.tray_icon.setIcon(icon)
-        self.tray_icon.setToolTip("스티커 메모 캘린더 (Sticky Notes)")
+        self.tray_icon.setToolTip("스티커 메모 캘린더 (단축키: Alt+N 새 메모, Alt+M 전체 숨김/표시)")
 
         # 트레이 컨텍스트 메뉴 생성
         self.menu = QMenu()
         
-        action_new = QAction("➕ 새 메모 만들기", self.menu)
+        action_new = QAction("➕ 새 메모 만들기 (Alt+N)", self.menu)
         action_new.triggered.connect(self.create_new_note)
         self.menu.addAction(action_new)
 
-        self.action_toggle = QAction("👁️ 모든 메모 보이기/숨기기", self.menu)
+        self.action_toggle = QAction("👁️ 모든 메모 보이기/숨기기 (Alt+M)", self.menu)
         self.action_toggle.triggered.connect(self.toggle_all_notes)
         self.menu.addAction(self.action_toggle)
 
@@ -456,6 +517,39 @@ class StickyTrayManager:
         self.alarm_timer = QTimer()
         self.alarm_timer.timeout.connect(self.check_alarms)
         self.alarm_timer.start(1000)
+
+        # 글로벌 핫키 수신 백그라운드 스레드 시작
+        self.hotkey_thread = GlobalHotkeyThread()
+        self.hotkey_thread.new_note_signal.connect(self.create_note_at_cursor)
+        self.hotkey_thread.toggle_all_signal.connect(self.toggle_all_notes)
+        self.hotkey_thread.start()
+
+    def create_note_at_cursor(self):
+        """OS 전역 단축키(Alt+N) 입력 시 마우스 커서 위치에 새 메모 즉시 생성"""
+        cursor_pos = QCursor.pos()
+        x = max(30, cursor_pos.x() - 150)
+        y = max(30, cursor_pos.y() - 50)
+        
+        color_choices = list(PASTEL_THEMES.keys())
+        random_color = random.choice(color_choices)
+        w = StickyNoteWindow(
+            note_id=None,
+            target_date=date.today().isoformat(),
+            target_time=datetime.now().strftime("%H:%M"),
+            content="",
+            color=random_color,
+            is_pinned=0,
+            is_alarm_enabled=0,
+            x=x,
+            y=y,
+            w=340,
+            h=300,
+        )
+        active_windows.append(w)
+        w.show()
+        w.raise_()
+        w.activateWindow()
+        self.notify("새 메모 생성 (Alt+N)", "마우스 커서 위치에 새 포스트잇이 생성되었습니다.")
 
     def check_alarms(self):
         """설정된 날짜 및 시간에 알람 사운드 및 팝업 토스트 트리거"""
@@ -504,7 +598,7 @@ class StickyTrayManager:
             self.toggle_all_notes()
 
     def toggle_all_notes(self):
-        """모든 메모 보이기/숨기기 토글"""
+        """모든 메모 보이기/숨기기 토글 (Alt+M)"""
         if not active_windows:
             self.create_new_note()
             return
@@ -567,7 +661,14 @@ class StickyTrayManager:
         self.tray_icon.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 4000)
 
     def exit_app(self):
-        """프로그램 완전 종료"""
+        """프로그램 완전 종료 및 핫키 해제"""
+        try:
+            if sys.platform == "win32":
+                user32 = ctypes.windll.user32
+                user32.UnregisterHotKey(None, 101)
+                user32.UnregisterHotKey(None, 102)
+        except Exception:
+            pass
         self.tray_icon.hide()
         self.app.quit()
 
@@ -617,7 +718,7 @@ def main():
             note_id=None,
             target_date=date.today().isoformat(),
             target_time=datetime.now().strftime("%H:%M"),
-            content="[ ] 오늘 할 일 1\n[ ] 오늘 할 일 2\n[ ] 상단 🔔 버튼으로 알람 켜기",
+            content="[ ] 오늘 할 일 1\n[ ] 오늘 할 일 2\n[ ] 상단 🔔 버튼으로 알람 켜기\n[ ] 어디서든 Alt+N으로 새 메모 생성",
             color="yellow",
             is_pinned=0,
             is_alarm_enabled=0,
@@ -630,7 +731,7 @@ def main():
         initial_note.show()
 
     # 트레이 실행 안내 알림
-    tray_manager.notify("스티커 메모 캘린더 시작", "시스템 트레이에 등록되었습니다. 알람 시간 설정 시 소리 및 팝업 알림이 제공됩니다.")
+    tray_manager.notify("스티커 메모 캘린더 시작", "글로벌 단축키 활성화됨:\n- Alt+N: 마우스 위치에 새 메모\n- Alt+M: 전체 숨김/표시")
 
     sys.exit(app.exec())
 
