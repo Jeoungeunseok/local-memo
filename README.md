@@ -9,7 +9,7 @@
 
 복잡한 개발 도구(Python, Docker, 가상환경 등)를 설치할 필요가 전혀 없습니다!
 
-1. **[최신 릴리즈 페이지 (v1.0.0)](https://github.com/Jeoungeunseok/local-memo/releases/tag/v1.0.0)** 또는 **[👉 StickyCalendar.exe 바로 다운로드](https://github.com/Jeoungeunseok/local-memo/releases/download/v1.0.0/StickyCalendar.exe)**를 클릭하여 실행 파일을 다운로드합니다.
+1. **[최신 릴리즈 페이지 (v1.1.0)](https://github.com/Jeoungeunseok/local-memo/releases/tag/v1.1.0)** 또는 **[👉 StickyCalendar.exe 바로 다운로드](https://github.com/Jeoungeunseok/local-memo/releases/download/v1.1.0/StickyCalendar.exe)**를 클릭하여 실행 파일을 다운로드합니다.
 2. 다운로드한 `StickyCalendar.exe` 파일을 바탕화면 등 원하는 위치로 옮겨 **더블 클릭**하면 즉시 실행됩니다.
 
 > 💡 **데이터 영구 보존 안내**:  
