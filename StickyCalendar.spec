@@ -5,7 +5,7 @@ a = Analysis(
     ['sticky_calendar.py'],
     pathex=['C:/Users/smhrd/old/anaconda3/Library/bin'],
     binaries=[('C:/Users/smhrd/old/anaconda3/Library/bin/sqlite3.dll', '.'), ('C:/Users/smhrd/old/anaconda3/Library/bin/ffi.dll', '.')],
-    datas=[],
+    datas=[('app_icon.ico', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
